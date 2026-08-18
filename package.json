@@ -14,11 +14,28 @@
     "cli",
     "tui"
   ],
+  "homepage": "https://github.com/4ndreello/toupeira#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4ndreello/toupeira.git"
+  },
+  "bugs": {
+    "url": "https://github.com/4ndreello/toupeira/issues"
+  },
   "type": "module",
-  "bin": { "toupeira": "index.js" },
-  "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test", "prepublishOnly": "node --test" },
+  "bin": {
+    "toupeira": "index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepublishOnly": "node --test"
+  },
   "author": "Gabriel Andreello",
   "license": "MIT",
-  "files": ["index.js"]
+  "files": [
+    "index.js"
+  ]
 }
