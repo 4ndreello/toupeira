@@ -1,0 +1,24 @@
+{
+  "name": "toupeira",
+  "version": "0.1.0",
+  "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "coding-agent",
+    "git-worktree",
+    "worktree",
+    "cleanup",
+    "disk-space",
+    "node-modules",
+    "cli",
+    "tui"
+  ],
+  "type": "module",
+  "bin": { "toupeira": "index.js" },
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test", "prepublishOnly": "node --test" },
+  "author": "Gabriel Andreello",
+  "license": "MIT",
+  "files": ["index.js"]
+}
