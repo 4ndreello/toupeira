@@ -34,7 +34,7 @@ function diskUsage(paths, onProgress = () => {}) {
   const sizes = new Map()
   let n = 0
   for (const p of paths) {
-    onProgress(`medindo ${++n}/${paths.length}`)
+    onProgress(`measuring ${++n}/${paths.length}`)
     const m = du(['-sb', '--', p]).match(/^(\d+)\t/)
     sizes.set(p, m ? Number(m[1]) : 0)
   }
@@ -190,7 +190,7 @@ function unpushed(repo, branch) {
 // ---------- scan ----------
 
 export function scan({ days = 7, roots = [], onProgress = () => {} } = {}) {
-  onProgress('lendo sessões dos agentes')
+  onProgress('reading agent sessions')
   const repos = new Set()
   for (const p of [...agentCwds(), ...roots]) {
     const r = mainRepoOf(p)
@@ -213,7 +213,7 @@ export function scan({ days = 7, roots = [], onProgress = () => {} } = {}) {
       if (w.path === repo || w.bare) continue // never touch the main checkout
 
       if (w.prunable || !existsSync(w.path)) {
-        items.push({ cat: 'worktree-prunable', repo, path: w.path, size: 0, safe: true, note: 'registro órfão, diretório sumiu', action: { kind: 'prune', repo } })
+        items.push({ cat: 'worktree-prunable', repo, path: w.path, size: 0, safe: true, note: 'registered here, but the directory is gone', action: { kind: 'prune', repo } })
         continue
       }
 
@@ -226,28 +226,28 @@ export function scan({ days = 7, roots = [], onProgress = () => {} } = {}) {
       const label = `${w.branch || w.head?.slice(0, 7)} (${age}d)`
 
       if (existsSync(nm) && age >= days) {
-        items.push({ cat: 'node_modules', repo, path: nm, size: 0, safe: true, note: `${label} — reinstalável`, action: { kind: 'rm', guard: '/node_modules' } })
+        items.push({ cat: 'node_modules', repo, path: nm, size: 0, safe: true, note: `${label} — reinstallable`, action: { kind: 'rm', guard: '/node_modules' } })
       }
 
       if (dirty) {
-        kept.push({ path: w.path, why: 'alterações não commitadas' })
+        kept.push({ path: w.path, why: 'uncommitted changes' })
         continue
       }
       if (merged) {
-        items.push({ cat: 'worktree-merged', repo, path: w.path, size: 0, safe: true, note: `${label} — já está na ${base}`, action: { kind: 'worktree-remove', repo } })
+        items.push({ cat: 'worktree-merged', repo, path: w.path, size: 0, safe: true, note: `${label} — already in ${base}`, action: { kind: 'worktree-remove', repo } })
       } else if (ahead === null) {
-        kept.push({ path: w.path, why: 'branch sem remote, commits só existem aqui' })
+        kept.push({ path: w.path, why: 'no upstream, these commits exist nowhere else' })
       } else if (ahead > 0) {
-        kept.push({ path: w.path, why: `${ahead} commit(s) sem push` })
+        kept.push({ path: w.path, why: `${ahead} unpushed commit(s)` })
       } else if (age >= days) {
-        items.push({ cat: 'worktree-stale', repo, path: w.path, size: 0, safe: false, note: `${label} — pushed, mas não mergeado`, action: { kind: 'worktree-remove', repo } })
+        items.push({ cat: 'worktree-stale', repo, path: w.path, size: 0, safe: false, note: `${label} — pushed, not merged`, action: { kind: 'worktree-remove', repo } })
       } else {
-        kept.push({ path: w.path, why: `recente (${age}d)` })
+        kept.push({ path: w.path, why: `recent (${age}d)` })
       }
     }
   }
 
-  onProgress('sessões órfãs')
+  onProgress('orphan sessions')
   const projects = join(HOME, '.claude/projects')
   if (existsSync(projects)) {
     for (const name of readdirSync(projects)) {
@@ -256,7 +256,7 @@ export function scan({ days = 7, roots = [], onProgress = () => {} } = {}) {
       const cwd = walkFiles(dir, 2, '.jsonl').map((f) => headMatch(f, /"cwd":"([^"]+)"/)).find(Boolean)
       const target = cwd || decodeProjectDir(name).path
       if (existsSync(target)) continue
-      items.push({ cat: 'session-orphan', repo: null, path: dir, size: 0, safe: true, note: `${target} não existe mais`, action: { kind: 'rm', guard: '/.claude/projects/' } })
+      items.push({ cat: 'session-orphan', repo: null, path: dir, size: 0, safe: true, note: `${target} is gone`, action: { kind: 'rm', guard: '/.claude/projects/' } })
     }
   }
 
@@ -278,7 +278,7 @@ export function remove(item) {
   if (action.kind === 'prune') return git(['worktree', 'prune'], action.repo) !== null
   if (action.kind === 'worktree-remove') return git(['worktree', 'remove', path], action.repo) !== null
   if (action.kind === 'rm') {
-    if (!path.includes(action.guard)) throw new Error(`recusado, fora do escopo: ${path}`)
+    if (!path.includes(action.guard)) throw new Error(`refused, outside its category: ${path}`)
     rmSync(path, { recursive: true, force: true })
     return true
   }
@@ -331,11 +331,11 @@ export function banner(cols) {
 // ---------- ui ----------
 
 const CATS = {
-  'worktree-prunable': 'registros órfãos de worktree',
-  'worktree-merged': 'worktrees já mergeados',
-  'worktree-stale': 'worktrees parados (não mergeados)',
-  node_modules: 'node_modules dentro de worktree',
-  'session-orphan': 'sessões de projeto que sumiu',
+  'worktree-prunable': 'stale worktree registrations',
+  'worktree-merged': 'merged worktrees',
+  'worktree-stale': 'idle worktrees, not merged',
+  node_modules: 'node_modules inside a worktree',
+  'session-orphan': 'sessions for projects that are gone',
 }
 
 export function human(bytes) {
@@ -361,7 +361,7 @@ function table(items, limit = 8) {
     console.log(`\n\x1b[1m${CATS[cat]}\x1b[0m — ${list.length} item(s), ${human(total)}`)
     for (const i of list.slice(0, limit)) console.log(`  ${human(i.size).padStart(8)}  ${short(i.path)}\n            \x1b[2m${i.note}\x1b[0m`)
     const rest = list.slice(limit)
-    if (rest.length) console.log(`  \x1b[2m… mais ${rest.length}, ${human(rest.reduce((s, i) => s + i.size, 0))}\x1b[0m`)
+    if (rest.length) console.log(`  \x1b[2m… ${rest.length} more, ${human(rest.reduce((s, i) => s + i.size, 0))}\x1b[0m`)
   }
 }
 
@@ -425,7 +425,7 @@ async function pick(items, headline) {
     const sum = items.reduce((s, i, n) => s + (sel[n] ? i.size : 0), 0)
 
     const out = ['\x1b[H\x1b[2J']
-    out.push(`${C.dim(MARK)} ${C.bold('toupeira')} ${C.dim('·')} ${headline} ${C.dim('·')} ${C.green(`${marked} marcado(s), soma ${human(sum)}`)}\n\n`)
+    out.push(`${C.dim(MARK)} ${C.bold('toupeira')} ${C.dim('·')} ${headline} ${C.dim('·')} ${C.green(`${marked} selected, sum ${human(sum)}`)}\n\n`)
 
     for (let n = top; n < top + h; n++) {
       const r = rows[n]
@@ -450,9 +450,9 @@ async function pick(items, headline) {
     }
 
     const r = rows[cur]
-    const note = r?.type === 'item' ? items[r.idx].note : `${rows.length} linhas · ! = precisa de atenção`
+    const note = r?.type === 'item' ? items[r.idx].note : `${rows.length} rows · ! = needs a look first`
     out.push(`\n${C.dim(clip(note, cols() - 1))}\n`)
-    out.push(C.dim('↑↓ mover · ←→ abrir/fechar · espaço marcar · a todos · enter aplicar · q sair'))
+    out.push(C.dim('↑↓ move · ←→ collapse/expand · space select · a all · enter apply · q quit'))
     process.stdout.write(out.join(''))
   }
 
@@ -533,7 +533,7 @@ function confirm(question) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
     rl.question(question, (a) => {
       rl.close()
-      resolve(/^s|^y/i.test(a.trim()))
+      resolve(/^y/i.test(a.trim()))
     })
   })
 }
@@ -549,14 +549,14 @@ async function main() {
   }
   if (argv.includes('-h') || argv.includes('--help') || cmd === 'help') {
     if (process.stdout.isTTY) console.log(`\n${banner().join('\n')}\n`)
-    console.log(`toupeira — limpa o que os agentes deixam para trás
+    console.log(`toupeira — clean up what coding agents leave behind
 
-  toupeira scan            lista, sem apagar nada (padrão)
-  toupeira clean           seleciona e apaga
+  toupeira scan            list everything, remove nothing (default)
+  toupeira clean           pick what goes, then confirm
 
-  --days <n>   idade mínima para considerar parado (padrão 7)
-  --root <p>   repo extra, para agentes que não deixam log
-  --yes        apaga o que é seguro, sem interação`)
+  --days <n>   minimum idle age for a worktree to count as stale (default 7)
+  --root <p>   extra repository, for agents that leave no session log
+  --yes        remove everything marked safe, no prompt`)
     return
   }
 
@@ -566,41 +566,41 @@ async function main() {
   if (process.stdout.isTTY) process.stdout.write('\x1b[2K')
 
   if (!items.length) {
-    console.log(`${repos} repo(s) descobertos, nada para limpar.`)
+    console.log(`${repos} repo(s) discovered, nothing to clean.`)
     return
   }
   const total = combinedSize(items.map((i) => i.path))
-  const headline = `${repos} repos ${C.dim('·')} ${human(total)} recuperável`
+  const headline = `${repos} repos ${C.dim('·')} ${human(total)} reclaimable`
 
   let chosen
   if (cmd !== 'clean') {
-    console.log(`${repos} repo(s) descobertos pelo histórico dos agentes`)
+    console.log(`${repos} repo(s) discovered from agent history`)
     table(items)
-    console.log(`\ntotal recuperável: \x1b[1m${human(total)}\x1b[0m`)
+    console.log(`\ntotal reclaimable: \x1b[1m${human(total)}\x1b[0m`)
     if (kept.length) {
-      console.log(`\n\x1b[2mmantidos (${kept.length}):\x1b[0m`)
+      console.log(`\n\x1b[2mkept (${kept.length}):\x1b[0m`)
       for (const k of kept) console.log(`  \x1b[2m${short(k.path)} — ${k.why}\x1b[0m`)
     }
-    console.log('\nrode `toupeira clean` para escolher o que apagar.')
+    console.log('\nrun `toupeira clean` to choose what goes.')
     return
   }
 
   if (argv.includes('--yes')) chosen = items.filter((i) => i.safe)
   else if (!process.stdin.isTTY) {
-    console.error('sem TTY: use --yes para limpar o que é seguro.')
+    console.error('no TTY: use --yes to remove what is safe.')
     process.exitCode = 1
     return
   } else {
     chosen = await pick(items, headline)
     if (kept.length) {
-      console.log(`\x1b[2mmantidos (${kept.length}):\x1b[0m`)
+      console.log(`\x1b[2mkept (${kept.length}):\x1b[0m`)
       for (const k of kept) console.log(`  \x1b[2m${short(k.path)} — ${k.why}\x1b[0m`)
     }
   }
-  if (!chosen.length) return console.log('nada selecionado.')
+  if (!chosen.length) return console.log('nothing selected.')
 
   const sum = combinedSize(chosen.map((i) => i.path))
-  if (!argv.includes('--yes') && !(await confirm(`\napagar ${chosen.length} item(s), ${human(sum)}? [s/N] `))) return console.log('cancelado.')
+  if (!argv.includes('--yes') && !(await confirm(`\nremove ${chosen.length} item(s), ${human(sum)}? [y/N] `))) return console.log('cancelled.')
 
   let freed = 0
   for (const i of chosen) {
@@ -614,7 +614,7 @@ async function main() {
       console.log(`  \x1b[31m✗\x1b[0m ${short(i.path)} — ${e.message}`)
     }
   }
-  console.log(`\nliberado ${human(freed)}. log em ${short(LOG)}`)
+  console.log(`\nfreed ${human(freed)}. log at ${short(LOG)}`)
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) await main()

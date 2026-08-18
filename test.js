@@ -76,7 +76,7 @@ test('human', () => {
 test('remove refuses a path outside the category it belongs to', () => {
   assert.throws(
     () => remove({ path: '/home/me/importante', action: { kind: 'rm', guard: '/.claude/projects/' } }),
-    /fora do escopo/
+    /outside its category/
   )
 })
 
