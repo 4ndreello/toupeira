@@ -8,6 +8,10 @@
 ~~""(((:-.,_,.-:)))""~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ```
 
+[![npm](https://img.shields.io/npm/v/toupeira?color=cb3837&logo=npm)](https://www.npmjs.com/package/toupeira)
+[![node](https://img.shields.io/node/v/toupeira)](https://www.npmjs.com/package/toupeira)
+[![license](https://img.shields.io/npm/l/toupeira)](LICENSE)
+
 Coding agents leave things behind: git worktrees whose PR merged weeks ago, a
 full `node_modules` inside each one, and session logs for projects that no
 longer exist. `toupeira` finds them and removes them.
@@ -15,6 +19,23 @@ longer exist. `toupeira` finds them and removes them.
 ```
 npx toupeira          # scan, read-only
 npx toupeira clean    # pick what goes, then confirm
+```
+
+## The scan
+
+`scan` answers how much and roughly where, in a fixed handful of lines — the
+per-item detail lives in the picker:
+
+```
+20 repo(s) · 253 item(s) · 4.3 GB reclaimable
+
+  merged worktrees                     13   3.2 GB  ━━━━━━━━━━━━
+  node_modules inside a worktree        3   2.4 GB  ━━━━━━━━━
+  idle worktrees, not merged            2   1.6 GB  ━━━━━━
+  sessions for projects that are gone 231    88 MB
+  stale worktree registrations          4     0 B
+
+  6 held back, not removable — `toupeira clean` shows why
 ```
 
 ## The picker

@@ -48,7 +48,7 @@ Every cleanup emits the same object; the ui and actions know nothing else:
 ```
 
 `safe` is what `--yes` and the picker's initial selection use. `cat` keys into
-`CATS`, merged from each cleanup's exported `cats` — the picker and table read
+`CATS`, merged from each cleanup's exported `cats` — the picker and summary read
 labels from there, so adding a category touches no ui file.
 
 ### Three registries, all plain arrays

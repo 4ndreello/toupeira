@@ -5,6 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
+import { summary } from './lib/ui.js'
+import { elapsed } from './lib/format.js'
 import { harnessCwds } from './lib/harnesses.js'
 import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe } from './lib/scan.js'
@@ -179,4 +181,30 @@ test('the CLI runs when invoked through a symlink, the way npm installs its bin'
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('elapsed', () => {
+  assert.equal(elapsed(12.4), '12 ms')
+  assert.equal(elapsed(1500), '1.5 s')
+})
+
+test('summary prints one line per category, biggest first, no per-item rows', () => {
+  const items = [
+    { cat: 'node_modules', size: 300, path: '/a' },
+    { cat: 'worktree-merged', size: 100, path: '/b' },
+    { cat: 'worktree-merged', size: 100, path: '/c' },
+  ]
+  const lines = []
+  const real = console.log
+  console.log = (s) => lines.push(String(s).replace(/\x1b\[[0-9;]*m/g, ''))
+  try {
+    summary({ items, kept: [{ path: '/d', why: 'dirty' }], repos: 2, total: 500 })
+  } finally {
+    console.log = real
+  }
+  const out = lines.join('\n')
+  assert.match(out, /2 repo\(s\) · 3 item\(s\)/)
+  assert.match(out, /1 held back/)
+  assert.ok(!out.includes('/a'), 'paths belong to the picker, not the summary')
+  assert.ok(out.indexOf('node_modules inside a worktree') < out.indexOf('merged worktrees'), 'biggest category first')
 })

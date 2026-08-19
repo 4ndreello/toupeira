@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { human, short } from './lib/format.js'
+import { elapsed, human, short } from './lib/format.js'
 import { combinedSize } from './lib/sh.js'
 import { scan } from './lib/scan.js'
 import { remove } from './lib/actions.js'
 import { LOG, log } from './lib/log.js'
 import { banner, loadingScreen } from './lib/logo.js'
-import { C, confirm, keptList, pick, table } from './lib/ui.js'
+import { C, confirm, keptList, pick, summary } from './lib/ui.js'
 
 export { decodeProjectDir } from './lib/sessions.js'
 export { harnesses, harnessCwds } from './lib/harnesses.js'
@@ -39,6 +39,7 @@ async function main() {
 
   const roots = argv.reduce((acc, a, i) => (a === '--root' ? [...acc, argv[i + 1]] : acc), [])
   const onProgress = loadingScreen()
+  const t0 = performance.now()
   const { items, kept, repos } = scan({ days: Number(flag('days', 7)), roots, onProgress })
   if (process.stdout.isTTY) process.stdout.write('\x1b[2K')
 
@@ -47,15 +48,10 @@ async function main() {
     return
   }
   const total = combinedSize(items.map((i) => i.path))
+  const took = performance.now() - t0
 
   if (cmd !== 'clean') {
-    console.log(`${repos} repo(s) discovered from agent history`)
-    table(items)
-    console.log(`\ntotal reclaimable: \x1b[1m${human(total)}\x1b[0m`)
-    if (kept.length) {
-      console.log()
-      keptList(kept)
-    }
+    summary({ items, kept, repos, total, took })
     console.log('\nrun `toupeira clean` to choose what goes.')
     return
   }
@@ -68,7 +64,7 @@ async function main() {
     process.exitCode = 1
     return
   } else {
-    chosen = await pick(items, `${repos} repos ${C.dim('·')} ${human(total)} reclaimable`)
+    chosen = await pick(items, `${repos} repos ${C.dim('·')} ${human(total)} reclaimable ${C.dim(`· scanned in ${elapsed(took)}`)}`)
     if (kept.length) keptList(kept)
   }
   if (!chosen.length) return console.log('nothing selected.')
