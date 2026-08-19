@@ -1,9 +1,8 @@
 name: ci
 
-on:
-  push:
-    branches: [main]
-  pull_request:
+# pull requests only: main is only ever reached through a merged PR, so running
+# the same commit again after the merge tests nothing new
+on: pull_request
 
 jobs:
   test:
