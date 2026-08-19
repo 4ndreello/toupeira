@@ -238,6 +238,10 @@ test('old chats are grouped per project, and a live project is never the target'
       )
     }
     assert.deepEqual(items.map((i) => i.action.files.length), [1, 1])
+    for (const i of items) {
+      assert.equal(i.span, '60-60d', 'the row carries the age span of the chats on offer')
+      assert.match(i.note, /\d{4}-\d{2}-\d{2} → \d{4}-\d{2}-\d{2}/, 'the note carries the real dates')
+    }
   } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(live, { recursive: true, force: true })
