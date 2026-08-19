@@ -5,7 +5,7 @@
        \"_   _"/        ┌┬┐ ┌─┐ ┬ ┬ ┌─┐ ┌─┐ ┬ ┬─┐ ┌─┐
        |(>)-(<)|         │  │ │ │ │ ├─┘ ├┤  │ ├┬┘ ├─┤
     ../  " O "  \..      ┴  └─┘ └─┘ ┴   └─┘ ┴ ┴└─ ┴ ┴
-~~""(((:-.,_,.-:)))""~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~""(((:-.,_,.-:)))""~~~~~~~~~~~~~~~~~~~~~~~~~ vX.Y.Z
 ```
 
 [![npm](https://img.shields.io/npm/v/toupeira?color=cb3837&logo=npm)](https://www.npmjs.com/package/toupeira)
@@ -19,6 +19,7 @@ longer exist. `toupeira` finds them and removes them.
 ```
 npx toupeira          # scan, read-only
 npx toupeira clean    # pick what goes, then confirm
+npx toupeira help     # the flags, nothing else
 ```
 
 ## The scan
@@ -46,10 +47,13 @@ per-item detail lives in the picker:
 <img width="814" height="367" alt="image" src="https://github.com/user-attachments/assets/2ea7fdff-990f-4175-8d4c-ee26d81b485d" />
 
 ↑↓ move, ←→ collapse/expand, space toggles an item or a whole category,
-`a` toggles everything, enter applies, `q` leaves. `[~]` means a category is
-partly selected; `!` marks an item that needs a look before it goes. The
-headline total is deduplicated across hardlinks; the live "sum" is a plain
-total, so it reads higher when worktrees share a package store.
+`a` toggles everything, enter applies, `q` leaves. `hjkl`, `g`/`G`, page up/down
+and escape work too. `[~]` means a category is partly selected; `!` marks an
+item that needs a look before it goes. Old chats also print their age range
+(`oldest 40d - newest 12d`) in a column of their own — the other categories
+leave it blank. The headline total is deduplicated across hardlinks; the live
+"sum" is a plain total, so it reads higher when worktrees share a package
+store.
 
 ## How it finds your repos
 
