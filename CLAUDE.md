@@ -48,10 +48,12 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
 Every cleanup emits the same object; the ui and actions know nothing else:
 
 ```js
-{ cat, repo, path, size, safe, note, action: { kind, repo?, guard?, files?, root? } }
+{ cat, repo, path, size, safe, note, span?, action: { kind, repo?, guard?, files?, root? } }
 ```
 
-`safe` is what `--yes` and the picker's initial selection use. `cat` keys into
+`span` is optional: a labelled age range the picker prints as its own column (only
+`transcript-old` has one; the gutter stays blank for the rest). `safe` is what
+`--yes` and the picker's initial selection use. `cat` keys into
 `CATS`, merged from each cleanup's exported `cats` — the picker and summary read
 labels from there, so adding a category touches no ui file.
 
