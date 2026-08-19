@@ -35,3 +35,21 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE"/toupeira-*.tgz
           ./node_modules/.bin/toupeira --help | grep -q 'clean up what coding agents leave behind'
+
+  version:
+    # a merged PR that forgot the bump means the release never happens, and it is
+    # only noticed after the merge, when fixing it costs a second PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git fetch --depth=1 origin "$GITHUB_BASE_REF"
+      - name: the version must move whenever shipped code does
+        run: |
+          # docs-only pull requests ship nothing, so they need no version
+          git diff --name-only FETCH_HEAD HEAD | grep -qvE '\.md$' || exit 0
+          old=$(git show FETCH_HEAD:package.json | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          new=$(node -p "require('./package.json').version")
+          test "$old" != "$new" || {
+            echo "package.json is still $old — bump it, or the release never happens"
+            exit 1
+          }
