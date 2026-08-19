@@ -94,6 +94,17 @@ a cleanup" for the contract.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`
   honored); logging failures never block a cleanup.
 
+## Releasing
+
+Every pull request that changes shipped code bumps `version` in `package.json` —
+the `version` job in CI fails otherwise (docs-only PRs are exempt). After the
+merge, the version on `main` is tagged and released:
+
+```bash
+git tag "v$(node -p "require('./package.json').version")" && git push --tags
+gh release create "v$(node -p "require('./package.json').version")" --generate-notes
+```
+
 ## Testing style
 
 `test.js` is one flat file of `node:test` cases, no framework, no fixtures. Tests
