@@ -30,25 +30,29 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
    to every cleanup in `lib/cleanups/index.js`. Each returns `{ items, kept }`.
    `kept` is what was deliberately *not* offered, with a reason — it is displayed,
    not removable.
-3. **measure** — `lib/sh.js:diskUsage` runs one `du` per path on purpose (a single
-   batched `du` counts a hardlinked file once, so pnpm/bun worktrees would report
-   near-zero). `combinedSize` is the deduped headline total.
+3. **measure** — `scan.js:targets` says what an item frees: its `action.files` when
+   it has a list, its `path` otherwise. Both size paths go through it, since `path`
+   is no longer always the target. `lib/sh.js:diskUsage` runs one `du` per directory
+   on purpose (a single batched `du` counts a hardlinked file once, so pnpm/bun
+   worktrees would report near-zero) and one `statSync` per plain file, because
+   transcripts arrive by the thousand. `combinedSize` is the deduped headline total.
 4. **dedupe** — `scan.js:dedupe` drops any item nested under an item whose action
    is `tree: true`; removing a worktree already takes its `node_modules`.
 5. **act** — `lib/actions.js:remove` looks the action up in `ACTIONS` and enforces
    `action.guard` (a substring the path must contain) *outside* the table, so a new
-   action cannot forget the path check.
+   action cannot forget the path check. An action carrying `files` is guarded per
+   entry instead: every file must end in `.jsonl` and sit under `action.root`.
 
 ### Item shape
 
 Every cleanup emits the same object; the ui and actions know nothing else:
 
 ```js
-{ cat, repo, path, size, safe, note, action: { kind, repo?, guard? } }
+{ cat, repo, path, size, safe, note, action: { kind, repo?, guard?, files?, root? } }
 ```
 
 `safe` is what `--yes` and the picker's initial selection use. `cat` keys into
-`CATS`, merged from each cleanup's exported `cats` — the picker and table read
+`CATS`, merged from each cleanup's exported `cats` — the picker and summary read
 labels from there, so adding a category touches no ui file.
 
 ### Three registries, all plain arrays
@@ -56,9 +60,9 @@ labels from there, so adding a category touches no ui file.
 Extension points are tables, not plugins. See the README's "Adding a harness or
 a cleanup" for the contract.
 
-- `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`.
-  `target()` returning `null` means "cannot tell", and nothing untellable is ever
-  removed.
+- `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`
+  and `transcripts: { dir, depth }`. `target()` returning `null` means "cannot tell",
+  and nothing untellable is ever removed.
 - `lib/cleanups/*.js` — export `cats` + `collect(ctx)`, add one line to `index.js`.
 - `lib/actions.js` — `{ tree, run }` per action kind.
 
@@ -74,6 +78,10 @@ a cleanup" for the contract.
   that vanished; treating those as orphans would delete live state.
 - **Transcripts are huge.** `sessions.js:headMatch` reads only the first 256 KB;
   `cwd` lives in the header.
+- **`transcript-old` points at a live project.** Its `path` is the repository the
+  chats belong to — display, size sort and dedupe only. What goes is `action.files`,
+  the action is `tree: false`, and `remove()` refuses the item unless every file is
+  a `.jsonl` under `action.root`. Never give this category a `rm` action.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
