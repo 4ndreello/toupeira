@@ -1,15 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
+import { harnessCwds } from './lib/harnesses.js'
+import { CATS, CLEANUPS } from './lib/cleanups/index.js'
+import { dedupe } from './lib/scan.js'
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
   const exists = (p) => real.has(p)
-  assert.deepEqual(decodeProjectDir('-home-me-dev-toupeira', exists), { path: '/home/me/dev/toupeira', exists: true })
+  assert.deepEqual(decodeProjectDir('-home-me-dev-toupeira', exists), { path: '/home/me/dev/toupeira', exists: true, matched: 4 })
 })
 
 test('decodeProjectDir reports a vanished path instead of guessing', () => {
@@ -17,6 +20,62 @@ test('decodeProjectDir reports a vanished path instead of guessing', () => {
   const r = decodeProjectDir('-tmp-agent-box-9DSMZ6', exists)
   assert.equal(r.exists, false)
   assert.equal(r.path, '/tmp/agent-box-9DSMZ6')
+})
+
+test('a name that encodes no real path at all is not a vanished project', () => {
+  // cursor keeps scratch state under names like `empty-window`: never a project that went away
+  assert.equal(decodeProjectDir('empty-window', () => false).matched, 0)
+})
+
+test('every harness reads its own cwd format out of one fake HOME', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const write = (rel, body) => {
+      mkdirSync(join(home, dirname(rel)), { recursive: true })
+      writeFileSync(join(home, rel), body)
+    }
+    write('.claude/projects/-tmp-claudeproj/session.jsonl', '{"cwd":"/tmp/claudeproj","x":1}\n')
+    write('.codex/sessions/2026/02/26/rollout-x.jsonl', '{"payload":{"cwd":"/tmp/codexproj"}}\n')
+    write('.gemini/tmp/backend/.project_root', '/tmp/geminiproj\n')
+    mkdirSync(join(home, '.cursor/projects/tmp-cursorproj'), { recursive: true })
+    write('.local/share/crush/projects.json', JSON.stringify({ projects: [{ path: '/tmp/crushproj' }] }))
+
+    const cwds = harnessCwds(home)
+    for (const p of ['/tmp/claudeproj', '/tmp/codexproj', '/tmp/geminiproj', '/tmp/cursorproj', '/tmp/crushproj']) {
+      assert.equal(cwds.has(p), true, `missing ${p}`)
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a HOME with no agent state yields nothing and throws nothing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    assert.equal(harnessCwds(home).size, 0)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('every category a cleanup produces has a label, and none collide', () => {
+  const declared = CLEANUPS.flatMap((c) => Object.keys(c.cats))
+  for (const cat of declared) assert.equal(typeof CATS[cat], 'string', `${cat} has no label`)
+  assert.equal(Object.keys(CATS).length, declared.length, 'two cleanups claim the same category')
+})
+
+test('an item inside a tree-removing item is dropped, but not under a prune', () => {
+  const items = [
+    { path: '/wt', action: { kind: 'worktree-remove' } },
+    { path: '/wt/node_modules', action: { kind: 'rm' } },
+    { path: '/other/node_modules', action: { kind: 'rm' } },
+    { path: '/gone', action: { kind: 'prune' } },
+    { path: '/gone/node_modules', action: { kind: 'rm' } },
+  ]
+  assert.deepEqual(
+    dedupe(items).map((i) => i.path),
+    ['/wt', '/other/node_modules', '/gone', '/gone/node_modules']
+  )
 })
 
 test('parseWorktrees keeps paths with spaces and flags prunable', () => {

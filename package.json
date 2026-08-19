@@ -1,6 +1,6 @@
 {
   "name": "toupeira",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
   "keywords": [
     "claude-code",
@@ -12,7 +12,9 @@
     "disk-space",
     "node-modules",
     "cli",
-    "tui"
+    "tui",
+    "gemini-cli",
+    "cursor"
   ],
   "homepage": "https://github.com/4ndreello/toupeira#readme",
   "repository": {
@@ -36,6 +38,7 @@
   "author": "Gabriel Andreello",
   "license": "MIT",
   "files": [
-    "index.js"
+    "index.js",
+    "lib"
   ]
 }
