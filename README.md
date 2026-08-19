@@ -22,18 +22,20 @@ npx toupeira clean    # pick what goes, then confirm
 `clean` opens a full-screen list, categories collapsed:
 
 ```
-toupeira · 21 repos · 4.3 GB recuperável · 250 marcado(s), soma 5.7 GB
+(>)-(<) toupeira · 20 repos · 4.3 GB reclaimable · 251 selected, sum 5.7 GB
 
-▶ [x] worktrees já mergeados          ━━━━━━━━━━━━ 3.2 GB   13 item(s)
-▶ [x] node_modules dentro de worktree ━━━━━━━━━    2.4 GB    3 item(s)
-▶ [ ] worktrees parados               ━━━━━━       1.6 GB    2 item(s)
+▶ [x] merged worktrees                  ━━━━━━━━━━━━ 3.2 GB    13 item(s)
+▶ [x] node_modules inside a worktree    ━━━━━━━━━    2.4 GB     3 item(s)
+▶ [ ] idle worktrees, not merged        ━━━━━━       1.6 GB     2 item(s)
+▶ [x] sessions for projects that are gone            88 MB    231 item(s)
+▶ [x] stale worktree registrations                    0 B       4 item(s)
 ```
 
 ↑↓ move, ←→ collapse/expand, space toggles an item or a whole category,
 `a` toggles everything, enter applies, `q` leaves. `[~]` means a category is
 partly selected; `!` marks an item that needs a look before it goes. The
-headline total is deduplicated across hardlinks; the live "soma" is a plain
-sum, so it reads higher when worktrees share a package store.
+headline total is deduplicated across hardlinks; the live "sum" is a plain
+total, so it reads higher when worktrees share a package store.
 
 ## How it finds your repos
 
