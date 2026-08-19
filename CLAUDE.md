@@ -41,14 +41,15 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
 5. **act** — `lib/actions.js:remove` looks the action up in `ACTIONS` and enforces
    `action.guard` (a substring the path must contain) *outside* the table, so a new
    action cannot forget the path check. An action carrying `files` is guarded per
-   entry instead: every file must end in `.jsonl` and sit under `action.root`.
+   entry instead: every entry must sit under `action.root`, plus end in
+   `action.ext` where the category sets one (`transcript-old` sets `.jsonl`).
 
 ### Item shape
 
 Every cleanup emits the same object; the ui and actions know nothing else:
 
 ```js
-{ cat, repo, path, size, safe, note, span?, action: { kind, repo?, guard?, files?, root? } }
+{ cat, repo, path, size, safe, note, span?, action: { kind, repo?, guard?, files?, root?, ext? } }
 ```
 
 `span` is optional: a labelled age range the picker prints as its own column (only
@@ -62,9 +63,10 @@ labels from there, so adding a category touches no ui file.
 Extension points are tables, not plugins. See the README's "Adding a harness or
 a cleanup" for the contract.
 
-- `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`
-  and `transcripts: { dir, depth }`. `target()` returning `null` means "cannot tell",
-  and nothing untellable is ever removed.
+- `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`,
+  `transcripts: { dir, depth }` and `caches: { root, dirs: [{ name, what, safe }] }`.
+  `target()` returning `null` means "cannot tell", and nothing untellable is ever
+  removed.
 - `lib/cleanups/*.js` — export `cats` + `collect(ctx)`, add one line to `index.js`.
 - `lib/actions.js` — `{ tree, run }` per action kind.
 
@@ -80,6 +82,11 @@ a cleanup" for the contract.
   that vanished; treating those as orphans would delete live state.
 - **Transcripts are huge.** `sessions.js:headMatch` reads only the first 256 KB;
   `cwd` lives in the header.
+- **`agent-cache` points at a cache directory.** Same shape as `transcript-old`:
+  `path` is the directory, for display and the size sort, while `action.files` are
+  the idle entries inside it. The directory itself is never a target, so the agent
+  keeps working. An entry can be a file or a whole session directory, which is why
+  `rm-files` deletes recursively.
 - **`transcript-old` points at a live project.** Its `path` is the repository the
   chats belong to — display, size sort and dedupe only. What goes is `action.files`,
   the action is `tree: false`, and `remove()` refuses the item unless every file is

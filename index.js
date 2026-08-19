@@ -20,7 +20,7 @@ const HELP = `toupeira — clean up what coding agents leave behind
   toupeira scan            list everything, remove nothing (default)
   toupeira clean           pick what goes, then confirm
 
-  --days <n>   minimum idle age for a worktree or a chat to count as stale (default 7)
+  --days <n>   minimum idle age for a worktree, a chat or a cache entry (default 7)
   --root <p>   extra repository, for agents that leave no session log
   --yes        remove everything marked safe, no prompt`
 

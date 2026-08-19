@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
@@ -11,6 +11,7 @@ import { harnessCwds } from './lib/harnesses.js'
 import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
+import * as caches from './lib/cleanups/caches.js'
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
@@ -258,4 +259,61 @@ test('remove refuses a files action that reaches outside its harness directory',
 test('targets is the file list when an action carries one, the path otherwise', () => {
   assert.deepEqual(targets({ path: '/a', action: { kind: 'rm' } }), ['/a'])
   assert.deepEqual(targets({ path: '/a', action: { kind: 'rm-files', files: ['/a/x.jsonl'] } }), ['/a/x.jsonl'])
+})
+
+test('agent caches offer only their idle entries, files and session directories alike', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const old = Date.now() - 30 * 86400e3
+    const write = (rel, mtime) => {
+      const f = join(home, rel)
+      mkdirSync(dirname(f), { recursive: true })
+      writeFileSync(f, 'x')
+      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
+    }
+    write('.claude/paste-cache/old.txt', old)
+    write('.claude/paste-cache/fresh.txt')
+    write('.claude/image-cache/deadbeef/1.png', old)
+    utimesSync(join(home, '.claude/image-cache/deadbeef'), old / 1000, old / 1000)
+    write('.claude/file-history/deadbeef/a.json', old)
+    utimesSync(join(home, '.claude/file-history/deadbeef'), old / 1000, old / 1000)
+
+    const { items } = caches.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [i.path.slice(home.length), i]))
+    assert.deepEqual([...by.keys()].sort(), ['/.claude/file-history', '/.claude/image-cache', '/.claude/paste-cache'])
+
+    const paste = by.get('/.claude/paste-cache')
+    assert.deepEqual(paste.action.files, [join(home, '.claude/paste-cache/old.txt')], 'the fresh paste stays')
+    assert.equal(paste.safe, true)
+    assert.equal(paste.span, 'oldest 30d - newest 30d')
+    // the whole session directory is one entry: the images inside it are not listed
+    assert.deepEqual(by.get('/.claude/image-cache').action.files, [join(home, '.claude/image-cache/deadbeef')])
+    assert.equal(by.get('/.claude/file-history').safe, false, 'undo history needs a look first')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a cache entry is removed by its list, and only from inside its own directory', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const dir = join(home, '.claude/image-cache')
+    const session = join(dir, 'deadbeef')
+    mkdirSync(session, { recursive: true })
+    writeFileSync(join(session, '1.png'), 'x')
+    const item = { path: dir, action: { kind: 'rm-files', root: dir, files: [session] } }
+    assert.equal(remove(item), true)
+    assert.equal(existsSync(session), false, 'the session directory goes')
+    assert.equal(existsSync(dir), true, 'the cache directory itself stays')
+
+    item.action.files = [join(home, '.claude/settings.json')]
+    assert.throws(() => remove(item), /refused, outside its category/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a chat list still refuses anything that is not a .jsonl', () => {
+  const item = { path: '/tmp/proj', action: { kind: 'rm-files', root: '/home/me/.claude/projects', ext: '.jsonl', files: ['/home/me/.claude/projects/-x/notes.md'] } }
+  assert.throws(() => remove(item), /refused, outside its category/)
 })
