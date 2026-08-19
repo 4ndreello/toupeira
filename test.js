@@ -12,6 +12,7 @@ import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
+import { diskUsage, combinedSize } from './lib/sh.js'
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
@@ -316,4 +317,19 @@ test('a cache entry is removed by its list, and only from inside its own directo
 test('a chat list still refuses anything that is not a .jsonl', () => {
   const item = { path: '/tmp/proj', action: { kind: 'rm-files', root: '/home/me/.claude/projects', ext: '.jsonl', files: ['/home/me/.claude/projects/-x/notes.md'] } }
   assert.throws(() => remove(item), /refused, outside its category/)
+})
+
+test('du measures directories on bsd as well as gnu', () => {
+  // `du -sb` is gnu-only: on macos it exits with "illegal option" and every directory,
+  // plus the whole headline, silently measured 0 B
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-du-'))
+  try {
+    const dir = join(home, 'cache')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'blob'), 'x'.repeat(200_000))
+    assert.ok(diskUsage([dir]).get(dir) >= 200_000, 'a directory measures its contents')
+    assert.ok(combinedSize([dir]) >= 200_000, 'the deduped headline is not zero')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
