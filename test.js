@@ -239,7 +239,7 @@ test('old chats are grouped per project, and a live project is never the target'
     }
     assert.deepEqual(items.map((i) => i.action.files.length), [1, 1])
     for (const i of items) {
-      assert.match(i.span, /^\d{4}-\d{2}-\d{2} → \d{4}-\d{2}-\d{2}$/, 'the row carries the first and last chat date')
+      assert.equal(i.span, 'oldest 60d - newest 60d', 'the row carries the labelled age of the chats on offer')
       assert.match(i.note, /1 chat\(s\), 60-60d old/, 'the note carries the count and the age')
     }
   } finally {
