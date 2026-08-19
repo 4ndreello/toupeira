@@ -51,7 +51,7 @@ Every cleanup emits the same object; the ui and actions know nothing else:
 { cat, repo, path, size, safe, note, span?, action: { kind, repo?, guard?, files?, root? } }
 ```
 
-`span` is optional: a short age range the picker prints as its own column (only
+`span` is optional: a date range the picker prints as its own column (only
 `transcript-old` has one; the gutter stays blank for the rest). `safe` is what
 `--yes` and the picker's initial selection use. `cat` keys into
 `CATS`, merged from each cleanup's exported `cats` — the picker and summary read
