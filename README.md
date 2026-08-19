@@ -39,11 +39,21 @@ total, so it reads higher when worktrees share a package store.
 
 ## How it finds your repos
 
-It doesn't crawl your disk and it has no config file. Claude Code and Codex
-write the working directory into every session log, so toupeira reads that,
-resolves each path to its main repository, and lets `git worktree list` report
-the rest — including worktrees parked in `/tmp` or under another agent's
-directory.
+It doesn't crawl your disk and it has no config file. Every agent already
+writes down where it worked, so toupeira reads that, resolves each path to its
+main repository, and lets `git worktree list` report the rest — including
+worktrees parked in `/tmp` or under another agent's directory.
+
+| harness | where it records the working directory | per-project state |
+| --- | --- | --- |
+| Claude Code | `~/.claude/projects/**/*.jsonl` | `~/.claude/projects/<path>` |
+| Codex | `~/.codex/sessions/**/*.jsonl` | — (partitioned by date) |
+| Gemini CLI | `~/.gemini/tmp/<name>/.project_root` | `~/.gemini/tmp/<name>` |
+| Cursor | `~/.cursor/projects/<path>` | `~/.cursor/projects/<path>` |
+| Crush | `~/.local/share/crush/projects.json` | — |
+
+Harnesses with per-project state also get their orphan directories reported
+once the project they belong to is gone.
 
 ## What it will not touch
 
@@ -68,6 +78,23 @@ is already upstream, so squash-merged worktrees are correctly reported as gone.
 ```
 
 Removals are logged to `~/.local/state/toupeira/operations.log`.
+
+## Adding a harness or a cleanup
+
+Three registries, all plain arrays — no plugin loader, no config file.
+
+- **harness** — one entry in `lib/harnesses.js`: a `cwds()` returning the paths
+  it recorded, and optionally a `projects` directory with a `target()` that
+  says which path each subdirectory belongs to. Returning `null` from
+  `target()` means "cannot tell", and nothing that cannot be told is removed.
+- **cleanup** — one file in `lib/cleanups/` exporting `cats` (its category
+  labels) and `collect(ctx)` returning `{ items, kept }`, plus one line in
+  `lib/cleanups/index.js`. The picker reads labels from the registry, so no ui
+  file has to be touched.
+- **action** — one entry in `lib/actions.js`: `run` performs the removal, `tree`
+  says whether it deletes a whole directory, which is how an item nested inside
+  another gets deduped away. The path guard is enforced outside the table, so a
+  new action cannot forget it.
 
 The mole face is adapted from a piece signed `sjw` in the public ASCII art
 collections.
