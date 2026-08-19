@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
@@ -9,7 +9,8 @@ import { summary } from './lib/ui.js'
 import { elapsed } from './lib/format.js'
 import { harnessCwds } from './lib/harnesses.js'
 import { CATS, CLEANUPS } from './lib/cleanups/index.js'
-import { dedupe } from './lib/scan.js'
+import { dedupe, targets } from './lib/scan.js'
+import * as transcripts from './lib/cleanups/transcripts.js'
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
@@ -207,4 +208,50 @@ test('summary prints one line per category, biggest first, no per-item rows', ()
   assert.match(out, /1 held back/)
   assert.ok(!out.includes('/a'), 'paths belong to the picker, not the summary')
   assert.ok(out.indexOf('node_modules inside a worktree') < out.indexOf('merged worktrees'), 'biggest category first')
+})
+
+test('old chats are grouped per project, and a live project is never the target', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
+  try {
+    const old = Date.now() - 60 * 86400e3
+    const write = (rel, cwd, mtime) => {
+      const f = join(home, rel)
+      mkdirSync(dirname(f), { recursive: true })
+      writeFileSync(f, `{"cwd":"${cwd}","pad":"${'x'.repeat(100)}"}\n`)
+      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
+    }
+    write('.claude/projects/-proj/old.jsonl', live, old)
+    write('.claude/projects/-proj/fresh.jsonl', live)
+    write('.claude/projects/-gone/old.jsonl', '/tmp/toupeira-does-not-exist', old)
+    write('.codex/sessions/2026/02/26/rollout.jsonl', live, old)
+
+    const { items } = transcripts.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.equal(items.length, 2, 'one item per (harness, project), nothing for the vanished one')
+    for (const i of items) {
+      assert.equal(i.path, live, 'the item points at the project, for display only')
+      assert.equal(i.safe, false, 'a deleted chat does not come back')
+      assert.deepEqual(
+        i.action.files.map((f) => f.endsWith('old.jsonl') || f.endsWith('rollout.jsonl')),
+        i.action.files.map(() => true),
+        'only the aged files are listed',
+      )
+    }
+    assert.deepEqual(items.map((i) => i.action.files.length), [1, 1])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(live, { recursive: true, force: true })
+  }
+})
+
+test('remove refuses a files action that reaches outside its harness directory', () => {
+  const item = { path: '/home/me/dev/repo', action: { kind: 'rm-files', root: '/home/me/.claude/projects', files: ['/home/me/dev/repo/src/index.js'] } }
+  assert.throws(() => remove(item), /refused, outside its category/)
+  item.action.files = ['/home/me/.claude/projects/-x/a.jsonl', '/etc/passwd']
+  assert.throws(() => remove(item), /refused, outside its category/)
+})
+
+test('targets is the file list when an action carries one, the path otherwise', () => {
+  assert.deepEqual(targets({ path: '/a', action: { kind: 'rm' } }), ['/a'])
+  assert.deepEqual(targets({ path: '/a', action: { kind: 'rm-files', files: ['/a/x.jsonl'] } }), ['/a/x.jsonl'])
 })

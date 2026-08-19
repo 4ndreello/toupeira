@@ -27,11 +27,12 @@ npx toupeira clean    # pick what goes, then confirm
 per-item detail lives in the picker:
 
 ```
-20 repo(s) · 253 item(s) · 4.3 GB reclaimable
+20 repo(s) · 277 item(s) · 5.1 GB reclaimable
 
   merged worktrees                     13   3.2 GB  ━━━━━━━━━━━━
   node_modules inside a worktree        3   2.4 GB  ━━━━━━━━━
   idle worktrees, not merged            2   1.6 GB  ━━━━━━
+  old chats, project still here        24   789 MB  ━━━
   sessions for projects that are gone 231    88 MB
   stale worktree registrations          4     0 B
 
@@ -66,7 +67,11 @@ worktrees parked in `/tmp` or under another agent's directory.
 | Crush | `~/.local/share/crush/projects.json` | — |
 
 Harnesses with per-project state also get their orphan directories reported
-once the project they belong to is gone.
+once the project they belong to is gone. Claude Code and Codex write one
+`.jsonl` per session with the working directory in its header, so their aged
+transcripts are reported as well — grouped by project, and only while that
+project is still there. Chats for a project that is gone belong to the orphan
+row above, which takes the whole directory instead.
 
 ## What it will not touch
 
@@ -74,6 +79,8 @@ once the project they belong to is gone.
 - a worktree with uncommitted changes
 - a worktree holding commits you never pushed
 - a branch with no upstream, where the commits exist nowhere else
+- the project a chat belongs to — only the transcript files ever go, and a chat
+  is never selected by default, because deleting one loses that session for good
 
 ## Merged means merged
 
@@ -85,7 +92,8 @@ is already upstream, so squash-merged worktrees are correctly reported as gone.
 ## Flags
 
 ```
---days <n>   minimum idle age to consider a worktree stale (default 7)
+--days <n>   minimum idle age for a worktree or a chat to count as stale
+             (default 7)
 --root <p>   extra repository, for agents that leave no session log
 --yes        remove everything marked safe, no prompt
 ```
@@ -100,6 +108,7 @@ Three registries, all plain arrays — no plugin loader, no config file.
   it recorded, and optionally a `projects` directory with a `target()` that
   says which path each subdirectory belongs to. Returning `null` from
   `target()` means "cannot tell", and nothing that cannot be told is removed.
+  A `transcripts: { dir, depth }` entry opts the harness into the chat category.
 - **cleanup** — one file in `lib/cleanups/` exporting `cats` (its category
   labels) and `collect(ctx)` returning `{ items, kept }`, plus one line in
   `lib/cleanups/index.js`. The picker reads labels from the registry, so no ui
