@@ -13,8 +13,9 @@
 [![license](https://img.shields.io/npm/l/toupeira)](LICENSE)
 
 Coding agents leave things behind: git worktrees whose PR merged weeks ago, a
-full `node_modules` inside each one, and session logs for projects that no
-longer exist. `toupeira` finds them and removes them.
+full `node_modules` inside each one, session logs for projects that no longer
+exist, and a pile of caches next to them — every image you ever pasted, every
+shell snapshot, every undo history. `toupeira` finds them and removes them.
 
 ```
 npx toupeira          # scan, read-only
@@ -34,6 +35,7 @@ per-item detail lives in the picker:
   node_modules inside a worktree        3   2.4 GB  ━━━━━━━━━
   idle worktrees, not merged            2   1.6 GB  ━━━━━━
   old chats, project still here        24   789 MB  ━━━
+  caches and history outside projects   8   123 MB
   sessions for projects that are gone 231    88 MB
   stale worktree registrations          4     0 B
 
@@ -49,9 +51,9 @@ per-item detail lives in the picker:
 ↑↓ move, ←→ collapse/expand, space toggles an item or a whole category,
 `a` toggles everything, enter applies, `q` leaves. `hjkl`, `g`/`G`, page up/down
 and escape work too. `[~]` means a category is partly selected; `!` marks an
-item that needs a look before it goes. Old chats also print their age range
-(`oldest 40d - newest 12d`) in a column of their own — the other categories
-leave it blank. The headline total is deduplicated across hardlinks; the live
+item that needs a look before it goes. Old chats and caches print their age
+range (`oldest 40d - newest 12d`) in a column of their own — the worktree
+categories leave it blank. The headline total is deduplicated across hardlinks; the live
 "sum" is a plain total, so it reads higher when worktrees share a package
 store.
 
@@ -77,6 +79,24 @@ transcripts are reported as well — grouped by project, and only while that
 project is still there. Chats for a project that is gone belong to the orphan
 row above, which takes the whole directory instead.
 
+## The caches
+
+Agents also keep derived state outside your projects, and nothing ever prunes it.
+`toupeira` thins these directories entry by entry, once an entry has been idle
+for `--days`; the directory itself always stays.
+
+| harness | directory | what it holds | offered by default |
+| --- | --- | --- | --- |
+| Claude Code | `image-cache`, `paste-cache` | every image and text you pasted | yes |
+| Claude Code | `shell-snapshots`, `debug`, `jobs`, `backups` | tooling leftovers | yes |
+| Claude Code | `file-history` | per-session undo history for edited files | no |
+| Claude Code | `transcripts` | cloud chats, no working directory recorded | no |
+| Codex | `shell_snapshots`, `log` | tooling leftovers | yes |
+
+An entry is one file (a paste) or one directory (a session's images), and its
+own mtime decides: a session directory holding one fresh file counts as fresh
+and stays. What is not offered by default still shows in the picker, marked `!`.
+
 ## What it will not touch
 
 - your main checkout, ever
@@ -85,6 +105,8 @@ row above, which takes the whole directory instead.
 - a branch with no upstream, where the commits exist nowhere else
 - the project a chat belongs to — only the transcript files ever go, and a chat
   is never selected by default, because deleting one loses that session for good
+- a cache directory itself, only the idle entries inside it — and undo history
+  and cloud chats are never selected by default
 
 ## Merged means merged
 
@@ -96,7 +118,7 @@ is already upstream, so squash-merged worktrees are correctly reported as gone.
 ## Flags
 
 ```
---days <n>   minimum idle age for a worktree or a chat to count as stale
+--days <n>   minimum idle age for a worktree, a chat or a cache entry
              (default 7)
 --root <p>   extra repository, for agents that leave no session log
 --yes        remove everything marked safe, no prompt
@@ -112,7 +134,8 @@ Three registries, all plain arrays — no plugin loader, no config file.
   it recorded, and optionally a `projects` directory with a `target()` that
   says which path each subdirectory belongs to. Returning `null` from
   `target()` means "cannot tell", and nothing that cannot be told is removed.
-  A `transcripts: { dir, depth }` entry opts the harness into the chat category.
+  A `transcripts: { dir, depth }` entry opts the harness into the chat category,
+  and a `caches: { root, dirs }` one into the cache category.
 - **cleanup** — one file in `lib/cleanups/` exporting `cats` (its category
   labels) and `collect(ctx)` returning `{ items, kept }`, plus one line in
   `lib/cleanups/index.js`. The picker reads labels from the registry, so no ui
