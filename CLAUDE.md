@@ -60,8 +60,8 @@ labels from there, so adding a category touches no ui file.
 
 ### Three registries, all plain arrays
 
-Extension points are tables, not plugins. See the README's "Adding a harness or
-a cleanup" for the contract.
+Extension points are tables, not plugins. The contract lives here, not in the
+README — the README is the npm page and stays user-facing.
 
 - `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`,
   `transcripts: { dir, depth }` and `caches: { root, dirs: [{ name, what, safe }] }`.

@@ -23,6 +23,18 @@ npx toupeira clean    # pick what goes, then confirm
 npx toupeira help     # the flags, nothing else
 ```
 
+## Install
+
+`npx` is enough — nothing is installed and the scan is read-only. Install it
+only if you run it often:
+
+```
+npm install -g toupeira
+toupeira
+```
+
+Node >= 20, no dependencies. Published as [`toupeira`](https://www.npmjs.com/package/toupeira) on npm.
+
 ## The scan
 
 `scan` answers how much and roughly where, in a fixed handful of lines — the
@@ -125,25 +137,6 @@ is already upstream, so squash-merged worktrees are correctly reported as gone.
 ```
 
 Removals are logged to `~/.local/state/toupeira/operations.log`.
-
-## Adding a harness or a cleanup
-
-Three registries, all plain arrays — no plugin loader, no config file.
-
-- **harness** — one entry in `lib/harnesses.js`: a `cwds()` returning the paths
-  it recorded, and optionally a `projects` directory with a `target()` that
-  says which path each subdirectory belongs to. Returning `null` from
-  `target()` means "cannot tell", and nothing that cannot be told is removed.
-  A `transcripts: { dir, depth }` entry opts the harness into the chat category,
-  and a `caches: { root, dirs }` one into the cache category.
-- **cleanup** — one file in `lib/cleanups/` exporting `cats` (its category
-  labels) and `collect(ctx)` returning `{ items, kept }`, plus one line in
-  `lib/cleanups/index.js`. The picker reads labels from the registry, so no ui
-  file has to be touched.
-- **action** — one entry in `lib/actions.js`: `run` performs the removal, `tree`
-  says whether it deletes a whole directory, which is how an item nested inside
-  another gets deduped away. The path guard is enforced outside the table, so a
-  new action cannot forget it.
 
 The mole face is adapted from a piece signed `sjw` in the public ASCII art
 collections.
