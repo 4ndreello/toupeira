@@ -265,6 +265,11 @@ test('remove refuses a files action that reaches outside its harness directory',
 test('targets is the file list when an action carries one, the path otherwise', () => {
   assert.deepEqual(targets({ path: '/a', action: { kind: 'rm' } }), ['/a'])
   assert.deepEqual(targets({ path: '/a', action: { kind: 'rm-files', files: ['/a/x.jsonl'] } }), ['/a/x.jsonl'])
+  // an action whose target is not a path measures nothing: `path` is a repo or a whole
+  // package store, and counting it would inflate the reclaimable headline by all of it
+  for (const kind of ['branch-delete', 'command']) {
+    assert.deepEqual(targets({ path: '/a', action: { kind } }), [], `${kind} frees no path`)
+  }
 })
 
 test('agent caches offer only their idle entries, files and session directories alike', () => {
@@ -592,7 +597,7 @@ test('package stores offer their own official prune when the store exists', () =
       assert.equal(i.cat, 'store-prune')
       assert.equal(i.safe, true, 'official maintenance commands are safe by definition')
       assert.equal(i.repo, null)
-      assert.match(i.note, /upper bound/, 'the measured size is the whole store, not what goes')
+      assert.deepEqual(targets(i), [], 'the store is display only: what a prune frees is unknown, never the whole store')
     }
   } finally {
     rmSync(home, { recursive: true, force: true })

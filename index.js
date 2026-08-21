@@ -90,14 +90,19 @@ async function main() {
 
   let freed = 0
   for (const i of chosen) {
+    // `label` names the target when it is not the path (a ref), so the line and the log
+    // say which branch went instead of printing the repo once per branch
+    const name = i.label ?? i.path
     try {
-      remove(i)
+      // a removal that reports false did not happen — an absent or wedged tool must not
+      // print a ✓ and count its store as freed
+      if (!remove(i)) throw new Error('the removal reported a failure')
       freed += i.size
-      log(`removed ${i.cat} ${i.path} ${i.size}`)
-      console.log(`  \x1b[32m✓\x1b[0m ${short(i.path)}`)
+      log(`removed ${i.cat} ${name} ${i.size}`)
+      console.log(`  \x1b[32m✓\x1b[0m ${short(name)}`)
     } catch (e) {
-      log(`failed ${i.cat} ${i.path} ${e.message}`)
-      console.log(`  \x1b[31m✗\x1b[0m ${short(i.path)} — ${e.message}`)
+      log(`failed ${i.cat} ${name} ${e.message}`)
+      console.log(`  \x1b[31m✗\x1b[0m ${short(name)} — ${e.message}`)
     }
   }
   console.log(`\nfreed ${human(freed)}. log at ${short(LOG)}`)
