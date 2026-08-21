@@ -12,6 +12,7 @@ import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
+import * as branches from './lib/cleanups/branches.js'
 import { diskUsage, combinedSize } from './lib/sh.js'
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
@@ -333,3 +334,95 @@ test('du measures directories on bsd as well as gnu', () => {
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+// builds a repo with one branch of each kind the graveyard must tell apart
+function graveyardRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-br-'))
+  const old = new Date(Date.now() - 40 * 86400e3).toISOString()
+  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const gc = (args) =>
+    execFileSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+    }).trim()
+  const commit = (file, body, msg, args = ['commit', '-qm']) => {
+    writeFileSync(join(dir, file), body)
+    g('add', file)
+    gc([...args, msg])
+  }
+  return { dir, g, gc, commit }
+}
+
+test('the graveyard offers merged branches whose remote side is gone, and only those', () => {
+  const { dir, g, gc, commit } = graveyardRepo()
+  try {
+    g('init', '-q', '-b', 'main')
+    g('config', 'user.email', 't@t')
+    g('config', 'user.name', 't')
+    commit('a', 'one\n', 'init')
+
+    // squash-merged, pushed, then deleted on the remote
+    g('checkout', '-qb', 'gone')
+    commit('b', 'two\n', 'squash me')
+    g('checkout', '-q', 'main')
+    g('merge', '--squash', 'gone')
+    g('commit', '-qm', 'squashed PR #1')
+    g('remote', 'add', 'origin', join(dir, 'remote.git'))
+    g('init', '--bare', '-q', join(dir, 'remote.git'))
+    g('push', '-qu', 'origin', 'gone')
+    g('update-ref', '-d', 'refs/remotes/origin/gone')
+
+    // same content as `gone`, but never pushed anywhere
+    g('branch', 'local-only', 'gone')
+
+    // merged but fresh: the age filter holds it back
+    g('branch', 'fresh', 'main')
+
+    // old but unmerged: unique work still lives here
+    g('checkout', '-qb', 'open', 'main~1')
+    commit('c', 'other\n', 'unique work')
+    g('checkout', '-q', 'main')
+
+    // old and merged, but checked out in a worktree
+    g('branch', 'old-wt', 'gone')
+    g('worktree', 'add', join(dir, 'wt'), 'old-wt')
+
+    const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [i.action.branch, i]))
+    assert.deepEqual([...by.keys()].sort(), ['gone', 'local-only'], 'exactly the two absorbed branches surface')
+    assert.equal(by.get('gone').safe, true, 'a deleted upstream is proven gone')
+    assert.equal(by.get('local-only').safe, false, 'never-pushed history is a guess, not a proof')
+    assert.match(by.get('gone').note, /merged into main/)
+    assert.match(by.get('gone').note, /origin\/gone deleted/)
+    for (const i of items) {
+      assert.equal(i.path, dir, 'the item points at the repo, display only')
+      assert.equal(i.action.kind, 'branch-delete')
+    }
+
+    remove(by.get('gone'))
+    assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
+    assert.match(g('branch', '--list', 'local-only'), /local-only/, 'what was not chosen stays')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('branch-delete refuses anything that is not a plain branch name', () => {
+  for (const bad of ['HEAD', '-oProxyCommand=x', 'a..b', 'x.lock', 42]) {
+    assert.throws(
+      () => remove({ path: '/repo', action: { kind: 'branch-delete', repo: '/repo', branch: bad } }),
+      /refused, unsafe branch name/
+    )
+  }
+})
+
+test('a branch item is not deduped away by tree items in its own repo', () => {
+  const items = [
+    { path: '/repo/node_modules', action: { kind: 'rm' } },
+    { path: '/repo', action: { kind: 'branch-delete' } },
+  ]
+  assert.deepEqual(dedupe(items).map((i) => i.path), ['/repo/node_modules', '/repo'])
+})
+
