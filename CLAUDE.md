@@ -21,18 +21,37 @@ in `package.json` must keep listing `lib`.
 
 ## Quality gate
 
-`.github/workflows/sonar.yml` is a separate workflow because it has to run on
-main too: the gate judges a pull request against the last analysis of its base
-branch, so without main there is no baseline. It is **blocking** —
-`sonar.qualitygate.wait=true` makes the scanner exit nonzero on a failed gate.
+`.github/workflows/sonar.yml` is a separate workflow from `ci.yml` because it has
+to run on main too: the gate judges a pull request against the last analysis of
+its *base* branch, so without main there is no baseline. Do not merge the two.
 
-The default Sonar Way gate only judges *new* code, so existing debt never blocks;
-what does block, in practice, is **80% coverage on the lines a pull request
-adds**. Coverage comes from `node --test --experimental-test-coverage`, so the
-gate costs no dependency.
+`sonar.qualitygate.wait=true` is what gives it teeth. Without it the scanner
+uploads and exits 0 whatever the verdict — a green ci over a failed gate. The
+default Sonar Way gate judges only *new* code, so existing debt never blocks;
+what blocks in practice is 80% coverage on the lines a pull request adds.
 
-Sonar itself stays out of the tarball — `files` in `package.json` is a whitelist,
-so `sonar-project.properties` is never published.
+Coverage comes from `node --test --experimental-test-coverage`, so the gate costs
+no dependency. The lcov reporter does not create its own directory, hence the
+`mkdir -p` in the script.
+
+Two things outside this repo can quietly hollow the gate out. Check both before
+believing a green result:
+
+- **Analysis Method must stay "GitHub Actions".** Sonar refuses CI analysis and
+  Automatic Analysis at the same time, and Automatic is the wrong one to keep: it
+  runs on sonar's servers, never runs `npm test`, and so reports no coverage
+  metric at all — not zero, absent. It also never reads
+  `sonar-project.properties`, so it does not know `test.js` is a test and files
+  hotspots against its fixtures.
+- **Third-party actions are pinned to a commit, never a tag.**
+  `githubactions:S7637` fails the gate over a tag and it is right: `@v5` went on
+  resolving after it had silently become a version carrying a known
+  vulnerability. The rule exempts `actions/*` because github owns those. And do
+  not trust the version a deprecation warning names — the notice telling us to
+  move to v6 was written while v6 was current, by which time v8 had shipped.
+
+Sonar itself never ships: `files` in `package.json` is a whitelist, so
+`sonar-project.properties` stays out of the tarball.
 
 ## Architecture
 
