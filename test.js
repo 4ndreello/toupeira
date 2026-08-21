@@ -322,6 +322,48 @@ test('a chat list still refuses anything that is not a .jsonl', () => {
   assert.throws(() => remove(item), /refused, outside its category/)
 })
 
+test('the newer harnesses read their layouts out of one fake HOME', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
+  try {
+    const old = Date.now() - 30 * 86400e3
+    const write = (rel, body, mtime) => {
+      const f = join(home, rel)
+      mkdirSync(dirname(f), { recursive: true })
+      writeFileSync(f, body)
+      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
+    }
+    write('.copilot/session-state/deadbeef/events.jsonl', `{"type":"session.start","data":{"context":{"cwd":"${live}"}}}\n`, old)
+    write('.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123/api_conversation_history.json', '[]', old)
+    utimesSync(join(home, '.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123'), old / 1000, old / 1000)
+    write('.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/456/ui_messages.json', '[]', old)
+    utimesSync(join(home, '.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/456'), old / 1000, old / 1000)
+    write('.local/share/opencode/log/log-2026-01-01.txt', 'x', old)
+    write('.local/share/opencode/tool-output/tool_01abc', 'x', old)
+
+    assert.equal(harnessCwds(home).has(live), true, 'the copilot event log carries the working directory')
+
+    const { items } = caches.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [i.path.slice(home.length), i]))
+    assert.deepEqual([...by.keys()].sort(), [
+      '/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks',
+      '/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks',
+      '/.local/share/opencode/log',
+      '/.local/share/opencode/tool-output',
+    ])
+    assert.equal(by.get('/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks').safe, false, 'task history is chat content')
+    assert.equal(by.get('/.local/share/opencode/tool-output').safe, true, 'spilled tool output is derived state')
+
+    const chats = transcripts.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items
+    assert.equal(chats.length, 1)
+    assert.equal(chats[0].repo, live, 'copilot chats group under the project like the other jsonl harnesses')
+    assert.match(chats[0].note, /^copilot-cli:/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(live, { recursive: true, force: true })
+  }
+})
+
 test('du measures directories on bsd as well as gnu', () => {
   // `du -sb` is gnu-only: on macos it exits with "illegal option" and every directory,
   // plus the whole headline, silently measured 0 B

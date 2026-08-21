@@ -83,6 +83,10 @@ worktrees parked in `/tmp` or under another agent's directory.
 | Gemini CLI | `~/.gemini/tmp/<name>/.project_root` | `~/.gemini/tmp/<name>` |
 | Cursor | `~/.cursor/projects/<path>` | `~/.cursor/projects/<path>` |
 | Crush | `~/.local/share/crush/projects.json` | — |
+| Copilot CLI | `~/.copilot/session-state/**/*.jsonl` | — (partitioned by session) |
+| OpenCode | — (chats live in sqlite) | — |
+| Cline | — (tasks keyed by opaque id) | — |
+| Roo Code | — (tasks keyed by opaque id) | — |
 
 Harnesses with per-project state also get their orphan directories reported
 once the project they belong to is gone. Claude Code and Codex write one
