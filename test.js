@@ -12,6 +12,7 @@ import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
+import * as browsers from './lib/cleanups/browsers.js'
 import * as branches from './lib/cleanups/branches.js'
 import { diskUsage, combinedSize } from './lib/sh.js'
 
@@ -424,5 +425,108 @@ test('a branch item is not deduped away by tree items in its own repo', () => {
     { path: '/repo', action: { kind: 'branch-delete' } },
   ]
   assert.deepEqual(dedupe(items).map((i) => i.path), ['/repo/node_modules', '/repo'])
+})
+
+test('superseded playwright builds are offered, the newest of a family never is', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const old = Date.now() - 30 * 86400e3
+    const build = (rel, mtime) => {
+      const d = join(home, rel)
+      mkdirSync(d, { recursive: true })
+      writeFileSync(join(d, 'marker'), 'x')
+      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
+    }
+    build('.cache/ms-playwright/chromium-100', old)
+    build('.cache/ms-playwright/chromium_headless_shell-100', old)
+    build('.cache/ms-playwright/chromium-101')
+    build('.cache/ms-playwright/firefox-50', old)
+
+    const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.equal(items.length, 1)
+    const item = items[0]
+    assert.equal(item.cat, 'browser-cache')
+    assert.equal(item.path, join(home, '.cache/ms-playwright'), 'the tool root is display only')
+    assert.deepEqual(item.action.files, [
+      join(home, '.cache/ms-playwright/chromium-100'),
+      join(home, '.cache/ms-playwright/chromium_headless_shell-100'),
+    ], 'the newest chromium and the lone firefox stay')
+    assert.equal(item.safe, true)
+    assert.match(item.span, /^oldest \d+d - newest \d+d$/)
+    assert.match(item.note, /playwright/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('superseded puppeteer builds are offered per family, single-build families stay', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const old = Date.now() - 30 * 86400e3
+    const build = (rel, mtime) => {
+      const d = join(home, rel)
+      mkdirSync(d, { recursive: true })
+      writeFileSync(join(d, 'marker'), 'x')
+      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
+    }
+    build('.cache/puppeteer/chrome/linux-120.0.0', old)
+    build('.cache/puppeteer/chrome/linux-121.0.0')
+    build('.cache/puppeteer/firefox/linux-130.0', old)
+
+    const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.equal(items.length, 1)
+    assert.equal(items[0].path, join(home, '.cache/puppeteer'))
+    assert.deepEqual(items[0].action.files, [join(home, '.cache/puppeteer/chrome/linux-120.0.0')])
+    assert.equal(items[0].safe, true)
+    assert.match(items[0].note, /puppeteer/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a HOME with no browser caches yields nothing and throws nothing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    assert.deepEqual(browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items, [])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a superseded build with a fresh mtime is held back anyway', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const build = (rel) => {
+      const d = join(home, rel)
+      mkdirSync(d, { recursive: true })
+      writeFileSync(join(d, 'marker'), 'x')
+    }
+    build('.cache/ms-playwright/chromium-99')
+    build('.cache/ms-playwright/chromium-100')
+
+    const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items, [], 'supersession alone is not proof, the age gate holds it back')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a browser build is removed by its list, and only from inside the tool root', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const root = join(home, '.cache/ms-playwright')
+    const build = join(root, 'chromium-100')
+    mkdirSync(build, { recursive: true })
+    writeFileSync(join(build, 'chrome'), 'x')
+    const item = { cat: 'browser-cache', repo: null, path: root, size: 0, safe: true, action: { kind: 'rm-files', root, files: [build] } }
+    assert.equal(remove(item), true)
+    assert.equal(existsSync(build), false, 'the superseded build goes')
+    assert.equal(existsSync(root), true, 'the tool root stays')
+
+    item.action.files = [join(home, '.cache/other/chromium-99')]
+    assert.throws(() => remove(item), /refused, outside its category/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
