@@ -24,6 +24,6 @@ jobs:
           node-version: 24
       # coverage comes from node's own test runner, so this stays dependency-free
       - run: npm run coverage
-      - uses: SonarSource/sonarqube-scan-action@v5
+      - uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
