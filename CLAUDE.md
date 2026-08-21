@@ -11,12 +11,28 @@ node --test --test-name-pattern human # a single test, by name
 node index.js                         # scan (read-only) against the real HOME
 node index.js clean --days 30         # the picker
 npm pack                              # what CI also checks: the tarball must run
+npm run coverage                      # lcov into coverage/, what sonar reads
 ```
 
 No dependencies, no lockfile, no build step, no linter. Node >= 20, ESM only
 (`"type": "module"`). CI runs on pull requests only, across Node 20/22/24, plus
 a `package` job that installs the packed tarball and runs the bin — so `files`
 in `package.json` must keep listing `lib`.
+
+## Quality gate
+
+`.github/workflows/sonar.yml` is a separate workflow because it has to run on
+main too: the gate judges a pull request against the last analysis of its base
+branch, so without main there is no baseline. It is **blocking** —
+`sonar.qualitygate.wait=true` makes the scanner exit nonzero on a failed gate.
+
+The default Sonar Way gate only judges *new* code, so existing debt never blocks;
+what does block, in practice, is **80% coverage on the lines a pull request
+adds**. Coverage comes from `node --test --experimental-test-coverage`, so the
+gate costs no dependency.
+
+Sonar itself stays out of the tarball — `files` in `package.json` is a whitelist,
+so `sonar-project.properties` is never published.
 
 ## Architecture
 
@@ -49,14 +65,17 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
 Every cleanup emits the same object; the ui and actions know nothing else:
 
 ```js
-{ cat, repo, path, size, safe, note, span?, action: { kind, repo?, guard?, files?, root?, ext? } }
+{ cat, repo, path, size, safe, note, span?, label?, action: { kind, repo?, branch?, cmd?, guard?, files?, root?, ext? } }
 ```
 
 `span` is optional: a labelled age range the picker prints as its own column (only
-`transcript-old` has one; the gutter stays blank for the rest). `safe` is what
-`--yes` and the picker's initial selection use. `cat` keys into
-`CATS`, merged from each cleanup's exported `cats` — the picker and summary read
-labels from there, so adding a category touches no ui file.
+`transcript-old` has one; the gutter stays blank for the rest). `label` is optional
+too: what the picker, the success line and the log print in place of `path`, for a
+category whose target is not a path (`branch-gone` sets `<repo>#<branch>`, so every
+branch of one repo does not print the same row). `safe` is what `--yes` and the
+picker's initial selection use. `cat` keys into `CATS`, merged from each cleanup's
+exported `cats` — the picker and summary read labels from there, so adding a
+category touches no ui file.
 
 ### Three registries, all plain arrays
 
@@ -68,13 +87,38 @@ README — the README is the npm page and stays user-facing.
   `target()` returning `null` means "cannot tell", and nothing untellable is ever
   removed.
 - `lib/cleanups/*.js` — export `cats` + `collect(ctx)`, add one line to `index.js`.
-- `lib/actions.js` — `{ tree, run }` per action kind.
+- `lib/actions.js` — `{ tree, frees?, run }` per action kind. `frees: false` says the
+  target is not a path (a ref, a tool's own prune), so `targets()` measures nothing
+  for it.
 
 ### Load-bearing details
 
 - **Squash merges.** `git branch --merged` misses them. `repo.js:isContentMerged`
   replays the branch tree as one commit on the merge base and asks `git cherry`
   whether the patch is already upstream. Do not "simplify" this back to `--merged`.
+  Its `--merged` listing is per-repo work, so a caller looping over branches reads
+  `repo.js:mergedBranches` once and passes the set in — otherwise every candidate
+  forks a full history walk.
+- **`defaultBranch()` answers `origin/main`, not `main`.** It reads
+  `refs/remotes/origin/HEAD`, so the result is remote-qualified and can never equal a
+  local branch name. Anything comparing a local name against it has to strip the
+  remote first (`branches.js:localName`), or the default branch becomes a candidate
+  for `git branch -D`.
+- **`branch-gone` needs a deleted upstream, not a missing one.** The evidence is a
+  tracking config whose remote ref is gone. No config at all is no evidence — that
+  branch may hold the only copy of its commits — so it is skipped, and nothing in
+  this category is ever labelled from push state that was never checked.
+- **A non-concrete toolchain default protects everything.** nvm writes whatever the
+  user typed (`lts/*`, `node`, a named alias). `toolchains.js:defaultPins` follows
+  alias files a few hops; a target that never becomes a version means the daily
+  driver is unknown, so that manager offers nothing and says why via `kept`.
+- **A headless shell is not a browser.** playwright names its shell builds
+  `chromium_headless_shell-<build>`; they are their own family, so
+  `playwright install --only-shell` of a newer build cannot make the last full
+  chromium look superseded.
+- **`remove()` returning `false` means it did not happen.** `index.js` turns that
+  into a `✗` and adds nothing to `freed`, so an absent or wedged tool never prints a
+  success. `command` also runs under a timeout for the same reason.
 - **Lossy project dir names.** Agents encode `/` as `-`, so `/a/b-c` and `/a-b/c`
   collide. `sessions.js:decodeProjectDir` walks the real filesystem greedily and
   returns `matched` — the count of resolved segments. `matched === 0` means the

@@ -113,12 +113,33 @@ An entry is one file (a paste) or one directory (a session's images), and its
 own mtime decides: a session directory holding one fresh file counts as fresh
 and stays. What is not offered by default still shows in the picker, marked `!`.
 
+## Beyond the agents
+
+The same scan reports developer junk no agent wrote, but every machine grows:
+
+| category | what it offers | offered by default |
+| --- | --- | --- |
+| local branches fully absorbed elsewhere | a branch idle for `--days` whose patch is already in the default branch *and* whose remote branch was deleted | yes |
+| superseded test-runner browser builds | a playwright or puppeteer build with a newer one of its own kind already installed, idle for `--days` | yes |
+| package stores, thinned by their own tool | `npm cache verify`, `pnpm store prune` — the tool decides what goes, so nothing here is counted as reclaimable | yes |
+| toolchain versions no known project pins | an nvm or pyenv version no discovered repo asks for, that is neither the newest install nor the manager's default | no |
+
+A branch is the one target that is not a file, so its row and the log name the ref
+(`~/dev/foo#feat/x`) and it frees 0 B — the disk is not what a merged branch costs you.
+
 ## What it will not touch
 
 - your main checkout, ever
 - a worktree with uncommitted changes
 - a worktree holding commits you never pushed
-- a branch with no upstream, where the commits exist nowhere else
+- a branch with no upstream, where the commits exist nowhere else — a branch is
+  offered only once its remote side is proven deleted, never merely absent
+- your default branch, whatever its tracking config says
+- the newest toolchain version, or the one your version manager calls default — and
+  no version at all when that default names a moving target like `lts/*` or `node`,
+  because then the daily driver cannot be identified
+- a browser build with nothing newer of its own kind installed: a headless shell is
+  not a browser and never supersedes one
 - the project a chat belongs to — only the transcript files ever go, and a chat
   is never selected by default, because deleting one loses that session for good
 - a cache directory itself, only the idle entries inside it — and undo history
