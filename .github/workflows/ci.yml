@@ -19,6 +19,19 @@ jobs:
       # no dependencies, so there is nothing to install and no lockfile to ci from
       - run: npm test
 
+  coverage:
+    # a ratchet, not a target: this number goes up over time and never down, so a
+    # pull request that adds code without tests drops the average and fails here.
+    # its own job because --test-coverage-lines does not exist on node 20, which
+    # the matrix above still has to cover
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test --experimental-test-coverage --test-coverage-lines=67
+
   package:
     # the published tarball is its own failure mode: index.js imports lib/, and a
     # "files" field that forgets it installs a package that cannot start.
@@ -48,7 +61,7 @@ jobs:
           # docs and ci config ship nothing — "files" in package.json never lists
           # them — so a pull request touching only these needs no version
           git diff --name-only FETCH_HEAD HEAD \
-            | grep -qvE '(\.md$|^\.github/|^\.gitignore$|^sonar-project\.properties$)' || exit 0
+            | grep -qvE '(\.md$|^\.github/|^\.gitignore$)' || exit 0
           old=$(git show FETCH_HEAD:package.json | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
           new=$(node -p "require('./package.json').version")
           test "$old" != "$new" || {
