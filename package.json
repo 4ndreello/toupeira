@@ -1,6 +1,6 @@
 {
   "name": "toupeira",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
   "keywords": [
     "claude-code",
@@ -33,6 +33,7 @@
   },
   "scripts": {
     "test": "node --test",
+    "coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
     "prepublishOnly": "node --test"
   },
   "author": "Gabriel Andreello",
