@@ -1,0 +1,29 @@
+name: sonar
+
+# unlike ci.yml this also runs on main, and the difference is load-bearing: the
+# quality gate judges a pull request against the last analysis of its base
+# branch, so main has to be analyzed or there is no baseline to judge against
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # sonar blames every line to date it; a shallow clone leaves it unable
+          # to tell new code from old, which is the whole gate
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          # one version on purpose: the matrix in ci.yml would upload the same
+          # report three times
+          node-version: 24
+      # coverage comes from node's own test runner, so this stays dependency-free
+      - run: npm run coverage
+      - uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

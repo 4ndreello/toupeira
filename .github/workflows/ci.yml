@@ -45,8 +45,10 @@ jobs:
       - run: git fetch --depth=1 origin "$GITHUB_BASE_REF"
       - name: the version must move whenever shipped code does
         run: |
-          # docs-only pull requests ship nothing, so they need no version
-          git diff --name-only FETCH_HEAD HEAD | grep -qvE '\.md$' || exit 0
+          # docs and ci config ship nothing — "files" in package.json never lists
+          # them — so a pull request touching only these needs no version
+          git diff --name-only FETCH_HEAD HEAD \
+            | grep -qvE '(\.md$|^\.github/|^\.gitignore$|^sonar-project\.properties$)' || exit 0
           old=$(git show FETCH_HEAD:package.json | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
           new=$(node -p "require('./package.json').version")
           test "$old" != "$new" || {
