@@ -10,6 +10,7 @@ import { elapsed } from './lib/format.js'
 import { harnessCwds } from './lib/harnesses.js'
 import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
+import { mergedBranches } from './lib/repo.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
 import * as browsers from './lib/cleanups/browsers.js'
@@ -442,19 +443,64 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 
     const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [i.action.branch, i]))
-    assert.deepEqual([...by.keys()].sort(), ['gone', 'local-only'], 'exactly the two absorbed branches surface')
+    assert.deepEqual([...by.keys()].sort(), ['gone'], 'only the branch whose remote side is gone surfaces')
     assert.equal(by.get('gone').safe, true, 'a deleted upstream is proven gone')
-    assert.equal(by.get('local-only').safe, false, 'never-pushed history is a guess, not a proof')
     assert.match(by.get('gone').note, /merged into main/)
     assert.match(by.get('gone').note, /origin\/gone deleted/)
     for (const i of items) {
       assert.equal(i.path, dir, 'the item points at the repo, display only')
+      assert.equal(i.label, `${dir}#${i.action.branch}`, 'the label names the ref that goes')
+      assert.deepEqual(targets(i), [], 'a ref frees nothing on disk, so nothing is measured')
       assert.equal(i.action.kind, 'branch-delete')
     }
 
     remove(by.get('gone'))
     assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
-    assert.match(g('branch', '--list', 'local-only'), /local-only/, 'what was not chosen stays')
+    assert.match(g('branch', '--list', 'local-only'), /local-only/, 'a never-pushed branch stays, absorbed or not')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// defaultBranch answers `origin/main`, which never equals a local branch name — without
+// stripping the remote the default branch itself becomes a candidate. a fork whose local
+// main tracks a second remote that dropped it is exactly the case that reaches here.
+test('the default branch is never offered, whatever its tracking config says', () => {
+  const { dir, g, commit } = graveyardRepo()
+  try {
+    g('init', '-q', '-b', 'main')
+    g('config', 'user.email', 't@t')
+    g('config', 'user.name', 't')
+    commit('a', 'one\n', 'init')
+    g('init', '--bare', '-q', join(dir, 'remote.git'))
+    g('remote', 'add', 'origin', join(dir, 'remote.git'))
+    g('push', '-qu', 'origin', 'main')
+    g('remote', 'set-head', 'origin', 'main')
+    // main now tracks a remote that no longer carries it, while origin/HEAD still names it
+    g('remote', 'add', 'fork', join(dir, 'fork.git'))
+    g('config', 'branch.main.remote', 'fork')
+    g('checkout', '-qb', 'work')
+
+    assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main', 'setup: the base is remote-qualified')
+    const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items.map((i) => i.action.branch), [], 'main is the default branch, not a graveyard candidate')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('mergedBranches reads the whole list, markers and all', () => {
+  const { dir, g, commit } = graveyardRepo()
+  try {
+    g('init', '-q', '-b', 'main')
+    g('config', 'user.email', 't@t')
+    g('config', 'user.name', 't')
+    commit('a', 'one\n', 'init')
+    g('branch', 'done')
+    g('worktree', 'add', '-q', join(dir, 'wt'), '-b', 'parked')
+    // `* main` is the checkout, `+ parked` sits in a worktree — both are merged names
+    assert.deepEqual([...mergedBranches(dir, 'main')].sort(), ['done', 'main', 'parked'])
+    assert.deepEqual([...mergedBranches(dir, 'nope')], [], 'an unknown base is unknown, not a list')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
