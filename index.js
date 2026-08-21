@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { elapsed, human, short } from './lib/format.js'
+import { elapsed, human, short, HOME } from './lib/format.js'
+import { report } from './lib/doctor.js'
 import { combinedSize } from './lib/sh.js'
 import { scan, targets } from './lib/scan.js'
 import { remove } from './lib/actions.js'
@@ -19,6 +20,7 @@ const HELP = `toupeira — clean up what coding agents leave behind
 
   toupeira scan            list everything, remove nothing (default)
   toupeira clean           pick what goes, then confirm
+  toupeira doctor          measure what toupeira will never touch
 
   --days <n>   minimum idle age for a worktree, a chat or a cache entry (default 7)
   --root <p>   extra repository, for agents that leave no session log
@@ -34,6 +36,20 @@ async function main() {
   if (argv.includes('-h') || argv.includes('--help') || cmd === 'help') {
     if (process.stdout.isTTY) console.log(`\n${banner().join('\n')}\n`)
     console.log(HELP)
+    return
+  }
+
+  // doctor only measures: it runs before the scan path so no spinner, no items, no actions
+  if (cmd === 'doctor') {
+    const { rows, docker } = report({ home: HOME })
+    console.log('doctor — measured, not touched:')
+    const w = Math.max(0, ...rows.map((r) => human(r.size).length))
+    for (const r of rows) console.log(`  ${human(r.size).padStart(w)}  ${r.name}  ${C.dim(short(r.path))}`)
+    if (docker != null) {
+      console.log('\ndocker system df:')
+      for (const line of docker.split('\n')) console.log(`  ${line}`)
+    }
+    if (!rows.length && docker == null) console.log('nothing to report.')
     return
   }
 
