@@ -14,6 +14,7 @@ import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
 import * as browsers from './lib/cleanups/browsers.js'
 import * as stores from './lib/cleanups/stores.js'
+import * as toolchains from './lib/cleanups/toolchains.js'
 import * as branches from './lib/cleanups/branches.js'
 import { diskUsage, combinedSize } from './lib/sh.js'
 
@@ -619,5 +620,84 @@ test('a command action runs the exact argv and reports failure without throwing'
   assert.equal(remove(ok), true)
   const dead = { path: '/irrelevant', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(3)'] } }
   assert.equal(remove(dead), false)
+})
+
+test('pinsMatch covers equality and segment-boundary prefixes only', () => {
+  assert.equal(toolchains.pinsMatch('20', '20.11.0'), true)
+  assert.equal(toolchains.pinsMatch('20.11.0', '20.11.0'), true)
+  assert.equal(toolchains.pinsMatch('v18', '18.19.0'), true, 'the v tag is noise')
+  assert.equal(toolchains.pinsMatch('20.1', '20.11.0'), false, '20.1 is not a prefix of 20.11')
+  assert.equal(toolchains.pinsMatch('21', '20.11.0'), false)
+})
+
+test('idle toolchains are the unpinned, unprotected, non-newest installs', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
+  try {
+    for (const v of ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0']) {
+      mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
+    }
+    mkdirSync(join(home, '.nvm/alias'), { recursive: true })
+    writeFileSync(join(home, '.nvm/alias/default'), 'v20.11.0\n')
+    writeFileSync(join(repo, '.nvmrc'), '18.19.0\n')
+
+    const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
+    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['v16.20.0'], 'pinned, default and newest all stay')
+    assert.equal(items[0].safe, false, 'repos no agent touched are invisible, so nothing is provably safe')
+    assert.match(items[0].note, /no pin among 1 repo\(s\)/)
+    assert.equal(items[0].action.kind, 'rm')
+
+    remove(items[0])
+    assert.equal(existsSync(join(home, '.nvm/versions/node/v16.20.0')), false, 'remove() really deletes it')
+
+    const outside = { path: '/usr', action: { kind: 'rm', guard: `${home}/.nvm/versions/node/` } }
+    assert.throws(() => remove(outside), /outside its category/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+test('pyenv versions respect their global file and .python-version pins', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
+  try {
+    for (const v of ['3.10.0', '3.11.2', '3.12.1']) mkdirSync(join(home, '.pyenv/versions', v), { recursive: true })
+    writeFileSync(join(home, '.pyenv/version'), '3.11.2\n')
+
+    let items = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} }).items
+    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['3.10.0'], 'global and newest stay, the rest goes')
+
+    writeFileSync(join(repo, '.python-version'), '3.10.0\n')
+    items = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} }).items
+    assert.deepEqual(items, [], 'a pin holds its version back')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('.tool-versions protects through its nodejs key', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
+  try {
+    for (const v of ['v18.19.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
+    writeFileSync(join(repo, '.tool-versions'), 'nodejs 18.19.0\npython 3.12.1\n')
+    const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} }).items
+      ? toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
+      : {}
+    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), [], 'v18 pinned, v22 newest — nothing to offer')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('a HOME with no version managers yields nothing and throws nothing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    assert.deepEqual(toolchains.collect({ repos: new Set(), home, onProgress() {} }).items, [])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
