@@ -11,7 +11,7 @@ node --test --test-name-pattern human # a single test, by name
 node index.js                         # scan (read-only) against the real HOME
 node index.js clean --days 30         # the picker
 npm pack                              # what CI also checks: the tarball must run
-npm run coverage                      # lcov into coverage/, what sonar reads
+npm run coverage                      # lcov into coverage/, for editor gutters
 ```
 
 No dependencies, no lockfile, no build step, no linter. Node >= 20, ESM only
@@ -21,37 +21,39 @@ in `package.json` must keep listing `lib`.
 
 ## Quality gate
 
-`.github/workflows/sonar.yml` is a separate workflow from `ci.yml` because it has
-to run on main too: the gate judges a pull request against the last analysis of
-its *base* branch, so without main there is no baseline. Do not merge the two.
+Coverage is enforced by node itself, in the `coverage` job:
+`--test-coverage-lines=78`. That number is a **ratchet** — the pull request that
+raises coverage is the one that raises the floor, and it never comes back down
+to make a pull request pass. It has its own job because the
+flag does not exist on node 20, which the matrix still has to cover.
 
-`sonar.qualitygate.wait=true` is what gives it teeth. Without it the scanner
-uploads and exits 0 whatever the verdict — a green ci over a failed gate. The
-default Sonar Way gate judges only *new* code, so existing debt never blocks;
-what blocks in practice is 80% coverage on the lines a pull request adds.
+This is deliberately cruder than what Sonar can do. Sonar's `new_coverage`
+condition asks only that the lines a pull request *adds* are covered, exempting
+old debt; a ratchet on the whole project asks less precisely but catches the same
+failure — code arriving without tests drops the average and fails the job.
 
-Coverage comes from `node --test --experimental-test-coverage`, so the gate costs
-no dependency. The lcov reporter does not create its own directory, hence the
-`mkdir -p` in the script.
+The tradeoff bought back everything the CI-based scanner cost: no workflow to
+maintain, no `SONAR_TOKEN`, no third-party action to keep pinned to a commit
+hash. That last one is not hypothetical — `@v5` went on resolving after it had
+silently become a version carrying a known vulnerability, and the notice telling
+us to move to v6 was written while v6 was current, by which time v8 had shipped.
+A gate whose own supply chain needs watching is a gate that costs more than it
+guards.
 
-Two things outside this repo can quietly hollow the gate out. Check both before
-believing a green result:
+Sonar still runs, but outside this repo: **Automatic Analysis**, on sonar's own
+servers, with nothing here to configure. It reports bugs, cognitive complexity,
+duplication and security hotspots, and comments on pull requests. What it cannot
+do is coverage — it never runs `npm test`, so that metric comes back absent, not
+zero. Hence the split: smells there, coverage here.
 
-- **Analysis Method must stay "GitHub Actions".** Sonar refuses CI analysis and
-  Automatic Analysis at the same time, and Automatic is the wrong one to keep: it
-  runs on sonar's servers, never runs `npm test`, and so reports no coverage
-  metric at all — not zero, absent. It also never reads
-  `sonar-project.properties`, so it does not know `test.js` is a test and files
-  hotspots against its fixtures.
-- **Third-party actions are pinned to a commit, never a tag.**
-  `githubactions:S7637` fails the gate over a tag and it is right: `@v5` went on
-  resolving after it had silently become a version carrying a known
-  vulnerability. The rule exempts `actions/*` because github owns those. And do
-  not trust the version a deprecation warning names — the notice telling us to
-  move to v6 was written while v6 was current, by which time v8 had shipped.
+Two consequences worth knowing before reading a Sonar verdict:
 
-Sonar itself never ships: `files` in `package.json` is a whitelist, so
-`sonar-project.properties` stays out of the tarball.
+- It never reads a config file from this repo, so it does not know `test.js` is a
+  test and will file hotspots against its `mkdtempSync` fixtures.
+- `S4036` (a tool resolved through `PATH`) and `S6959` (`reduce` with no initial
+  value) both fire here and are both wrong: resolving `git`, `du` and `docker`
+  through `PATH` is the point, and every `reduce` in this codebase sits behind a
+  length guard. Mark them, do not code around them.
 
 ## Architecture
 
