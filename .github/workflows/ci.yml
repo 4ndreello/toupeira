@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --test --experimental-test-coverage --test-coverage-lines=67
+      - run: node --test --experimental-test-coverage --test-coverage-lines=78
 
   package:
     # the published tarball is its own failure mode: index.js imports lib/, and a
