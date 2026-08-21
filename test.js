@@ -13,6 +13,7 @@ import { dedupe, targets } from './lib/scan.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
 import * as browsers from './lib/cleanups/browsers.js'
+import * as stores from './lib/cleanups/stores.js'
 import * as branches from './lib/cleanups/branches.js'
 import { diskUsage, combinedSize } from './lib/sh.js'
 
@@ -528,5 +529,53 @@ test('a browser build is removed by its list, and only from inside the tool root
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
+})
+
+test('package stores offer their own official prune when the store exists', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    mkdirSync(join(home, '.npm/_cacache/content-v2'), { recursive: true })
+    writeFileSync(join(home, '.npm/_cacache/content-v2/x'), 'x')
+    mkdirSync(join(home, '.local/share/pnpm/store/v3/files/a/b'), { recursive: true })
+    writeFileSync(join(home, '.local/share/pnpm/store/v3/files/a/b/blob'), 'x')
+
+    const { items } = stores.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.equal(items.length, 2)
+    assert.deepEqual(items.map((i) => i.path.slice(home.length)), ['/.npm', '/.local/share/pnpm/store'])
+    assert.deepEqual(items[0].action.cmd, ['npm', 'cache', 'verify'])
+    assert.deepEqual(items[1].action.cmd, ['pnpm', 'store', 'prune'])
+    for (const i of items) {
+      assert.equal(i.cat, 'store-prune')
+      assert.equal(i.safe, true, 'official maintenance commands are safe by definition')
+      assert.equal(i.repo, null)
+      assert.match(i.note, /upper bound/, 'the measured size is the whole store, not what goes')
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a HOME with no package stores yields nothing and throws nothing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    assert.deepEqual(stores.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items, [])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('command actions refuse anything but a plain basename argv', () => {
+  for (const cmd of [undefined, 'rm -rf /', [], [42], ['./evil']]) {
+    const action = { kind: 'command' }
+    if (cmd !== undefined) action.cmd = cmd
+    assert.throws(() => remove({ path: '/irrelevant', action }), /refused, malformed command/)
+  }
+})
+
+test('a command action runs the exact argv and reports failure without throwing', () => {
+  const ok = { path: '/irrelevant', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(0)'] } }
+  assert.equal(remove(ok), true)
+  const dead = { path: '/irrelevant', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(3)'] } }
+  assert.equal(remove(dead), false)
 })
 
