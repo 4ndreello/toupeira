@@ -751,19 +751,50 @@ test('pyenv versions respect their global file and .python-version pins', () => 
   }
 })
 
-test('.tool-versions protects through its nodejs key', () => {
+test('.tool-versions protects through its nodejs key, fallback versions included', () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
   try {
-    for (const v of ['v18.19.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
-    writeFileSync(join(repo, '.tool-versions'), 'nodejs 18.19.0\npython 3.12.1\n')
-    const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} }).items
-      ? toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
-      : {}
-    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), [], 'v18 pinned, v22 newest — nothing to offer')
+    for (const v of ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
+    // asdf/mise fall back along the line, so 18 is pinned just as much as 20
+    writeFileSync(join(repo, '.tool-versions'), 'nodejs 20.11.0 18.19.0\npython 3.12.1\n')
+    const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
+    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['v16.20.0'], 'only the version no line mentions is idle')
   } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('an nvm default recorded as an alias resolves through the alias files', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    for (const v of ['v18.19.0', 'v20.19.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
+    mkdirSync(join(home, '.nvm/alias/lts'), { recursive: true })
+    writeFileSync(join(home, '.nvm/alias/default'), 'lts/*\n')
+    writeFileSync(join(home, '.nvm/alias/lts/*'), 'lts/iron\n')
+    writeFileSync(join(home, '.nvm/alias/lts/iron'), 'v20.19.0\n')
+
+    const { items } = toolchains.collect({ repos: new Set(), home, onProgress() {} })
+    assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['v18.19.0'], 'the default resolves to v20, v22 is newest')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a default that names no fixed version protects every install', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    for (const v of ['v18.19.0', 'v20.11.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
+    mkdirSync(join(home, '.nvm/alias'), { recursive: true })
+    writeFileSync(join(home, '.nvm/alias/default'), 'node\n') // nvm's "whatever is newest"
+
+    const { items, kept } = toolchains.collect({ repos: new Set(), home, onProgress() {} })
+    assert.deepEqual(items, [], 'the daily driver is unknown, so nothing is offered')
+    assert.equal(kept.length, 1)
+    assert.match(kept[0].why, /names no fixed version/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })
 
