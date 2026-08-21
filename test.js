@@ -543,13 +543,36 @@ test('superseded playwright builds are offered, the newest of a family never is'
     const item = items[0]
     assert.equal(item.cat, 'browser-cache')
     assert.equal(item.path, join(home, '.cache/ms-playwright'), 'the tool root is display only')
-    assert.deepEqual(item.action.files, [
-      join(home, '.cache/ms-playwright/chromium-100'),
-      join(home, '.cache/ms-playwright/chromium_headless_shell-100'),
-    ], 'the newest chromium and the lone firefox stay')
+    assert.deepEqual(
+      item.action.files,
+      [join(home, '.cache/ms-playwright/chromium-100')],
+      'the newest chromium, the lone firefox and the lone headless shell stay'
+    )
     assert.equal(item.safe, true)
     assert.match(item.span, /^oldest \d+d - newest \d+d$/)
     assert.match(item.note, /playwright/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// `playwright install --only-shell` on a newer version is the normal way to end up with
+// a shell build newer than every browser build — it must not condemn the last browser
+test('a newer headless shell never supersedes the browser it is not', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const old = Date.now() - 30 * 86400e3
+    const build = (rel, mtime) => {
+      const d = join(home, rel)
+      mkdirSync(d, { recursive: true })
+      writeFileSync(join(d, 'marker'), 'x')
+      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
+    }
+    build('.cache/ms-playwright/chromium-1140', old)
+    build('.cache/ms-playwright/chromium_headless_shell-1148')
+
+    const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items, [], 'the only full chromium is nobody else in its family')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
