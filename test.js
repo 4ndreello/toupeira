@@ -1,23 +1,24 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
 import { summary } from './lib/ui.js'
 import { elapsed } from './lib/format.js'
 import { harnessCwds } from './lib/harnesses.js'
 import { CATS, CLEANUPS } from './lib/cleanups/index.js'
 import { dedupe, targets } from './lib/scan.js'
-import { mergedBranches } from './lib/repo.js'
+import { mainRepoOf, mergedBranches } from './lib/repo.js'
 import * as transcripts from './lib/cleanups/transcripts.js'
 import * as caches from './lib/cleanups/caches.js'
 import * as browsers from './lib/cleanups/browsers.js'
 import * as stores from './lib/cleanups/stores.js'
 import * as toolchains from './lib/cleanups/toolchains.js'
 import * as branches from './lib/cleanups/branches.js'
-import { diskUsage, combinedSize } from './lib/sh.js'
+import * as worktrees from './lib/cleanups/worktrees.js'
+import { diskUsage, combinedSize, git } from './lib/sh.js'
 import { report } from './lib/doctor.js'
 
 // node's default sort already compares as strings, which is what every list here holds —
@@ -405,6 +406,65 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
   }
 })
 
+test('t3 code feeds its parked worktrees into the regular worktree cleanup', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const repoDir = mkdtempSync(join(tmpdir(), 'toupeira-t3repo-'))
+  try {
+    const g = (a) => git(a, repoDir)
+    g(['init', '-q', '-b', 'main'])
+    g(['config', 'user.email', 't@t'])
+    g(['config', 'user.name', 't'])
+    writeFileSync(join(repoDir, 'a'), 'one\n')
+    g(['add', '.'])
+    g(['commit', '-qm', 'init'])
+
+    // the way t3 code parks an agent workspace: ~/.t3/worktrees/<repo>/<branch>
+    const wt = join(home, '.t3/worktrees', basename(repoDir), 'feature-x')
+    mkdirSync(wt, { recursive: true })
+    g(['worktree', 'add', wt, '-b', 'feature-x', 'main'])
+
+    assert.equal(harnessCwds(home).has(wt), true, 'the parked workspace counts as a recorded working directory')
+    assert.equal(realpathSync(mainRepoOf(wt)), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
+
+    const repos = new Set([...harnessCwds(home)].map(mainRepoOf).filter(Boolean))
+    const { items } = worktrees.collect({ repos, days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items.map((i) => [i.cat, i.path]), [['worktree-merged', wt]], 'a clean merged t3 workspace is offered for removal')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(repoDir, { recursive: true, force: true })
+  }
+})
+
+test('t3 code logs thin by entry age under their nested cache root', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  try {
+    const fresh = Date.now() - 86400e3
+    const old = Date.now() - 30 * 86400e3
+    const touch = (rel, body, mtime) => {
+      const f = join(home, rel)
+      mkdirSync(dirname(f), { recursive: true })
+      writeFileSync(f, body)
+      utimesSync(f, mtime / 1000, mtime / 1000)
+    }
+    touch('.t3/userdata/logs/server.trace.ndjson.5', 'x'.repeat(100), old)
+    touch('.t3/userdata/logs/server.log', 'x', fresh)
+    touch('.t3/caches/status.json', '{}', old)
+
+    const { items } = caches.collect({ days: 7, home, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [i.path.slice(home.length), i]))
+    assert.equal(by.size, 2)
+    assert.equal(by.has('/.t3/caches'), true)
+    assert.equal(by.has('/.t3/userdata/logs'), true)
+    assert.equal(by.get('/.t3/caches').safe, true)
+    const logs = by.get('/.t3/userdata/logs')
+    assert.deepEqual(logs.action.files, [join(home, '.t3/userdata/logs/server.trace.ndjson.5')], 'the rotated trace goes, the active log stays')
+    assert.equal(logs.safe, true, 'server logs are derived state')
+    assert.match(logs.note, /^t3-code:/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('du measures directories on bsd as well as gnu', () => {
   // `du -sb` is gnu-only: on macos it exits with "illegal option" and every directory,
   // plus the whole headline, silently measured 0 B
@@ -475,7 +535,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 
     const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [i.action.branch, i]))
-    assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
+assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
     assert.equal(by.get('gone').safe, true, 'a deleted upstream is proven gone')
     assert.match(by.get('gone').note, /merged into main/)
     assert.match(by.get('gone').note, /origin\/gone deleted/)
@@ -523,7 +583,7 @@ test('mergedBranches reads the whole list, markers and all', () => {
     g('branch', 'done')
     g('worktree', 'add', '-q', join(dir, 'wt'), '-b', 'parked')
     // `* main` is the checkout, `+ parked` sits in a worktree — both are merged names
-    assert.deepEqual(sorted(mergedBranches(dir, 'main')), ['done', 'main', 'parked'])
+assert.deepEqual(sorted(mergedBranches(dir, 'main')), ['done', 'main', 'parked'])
     assert.deepEqual([...mergedBranches(dir, 'nope')], [], 'an unknown base is unknown, not a list')
   } finally {
     rmSync(dir, { recursive: true, force: true })
