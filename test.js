@@ -60,6 +60,29 @@ function versionsHome(rel, versions) {
   return home
 }
 
+// every git-behavior test drives the real binary into its own temp dir: one runner, so no
+// test copies the execFileSync scaffolding again
+const gitIn = (dir) => (...args) =>
+  execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+
+// the same runner under a fixed clock, for tests that care when a commit was made
+const gitAt = (dir, iso) => (args) =>
+  execFileSync('git', args, {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso },
+  }).trim()
+
+// an empty repo on main with an identity, which is where every repo-behavior test begins
+const initRepo = (dir) => {
+  const g = gitIn(dir)
+  g('init', '-q', '-b', 'main')
+  g('config', 'user.email', 't@t')
+  g('config', 'user.name', 't')
+  return g
+}
+
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
   const exists = (p) => real.has(p)
@@ -155,11 +178,8 @@ test('parseWorktrees keeps paths with spaces and flags prunable', () => {
 
 test('isContentMerged catches a squash merge that git branch --merged misses', () => {
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-'))
-  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const g = initRepo(dir)
   try {
-    g('init', '-q', '-b', 'main')
-    g('config', 'user.email', 't@t')
-    g('config', 'user.name', 't')
     writeFileSync(join(dir, 'a'), 'one\n')
     g('add', '.')
     g('commit', '-qm', 'init')
@@ -486,14 +506,8 @@ test('du measures directories on bsd as well as gnu', () => {
 function graveyardRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-br-'))
   const old = new Date(Date.now() - 40 * 86400e3).toISOString()
-  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-  const gc = (args) =>
-    execFileSync('git', args, {
-      cwd: dir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
-    }).trim()
+  const g = gitIn(dir)
+  const gc = gitAt(dir, old)
   const commit = (file, body, msg, args = ['commit', '-qm']) => {
     writeFileSync(join(dir, file), body)
     g('add', file)
@@ -878,14 +892,8 @@ test('docker output passes through verbatim, and a failing probe reports null in
 function worktreeYard() {
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-wt-'))
   const old = new Date(Date.now() - 40 * 86400e3).toISOString()
-  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-  const gc = (args) =>
-    execFileSync('git', args, {
-      cwd: dir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
-    }).trim()
+  const g = gitIn(dir)
+  const gc = gitAt(dir, old)
   const commit = (file, body, msg, aged = false) => {
     writeFileSync(join(dir, file), body)
     g('add', file)
@@ -893,9 +901,7 @@ function worktreeYard() {
     if (aged) gc(['commit', '-qm', msg])
     else g('commit', '-qm', msg)
   }
-  g('init', '-q', '-b', 'main')
-  g('config', 'user.email', 't@t')
-  g('config', 'user.name', 't')
+  initRepo(dir)
   commit('a', 'one\n', 'init')
   commit('.gitignore', 'node_modules\n', 'ignore builds')
   // a real upstream, so pushed branches can be told from unpushed ones
@@ -1006,10 +1012,7 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => 
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-scan-'))
   try {
-    const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-    g('init', '-q', '-b', 'main')
-    g('config', 'user.email', 't@t')
-    g('config', 'user.name', 't')
+    const g = initRepo(dir)
     writeFileSync(join(dir, 'a'), 'one\n')
     writeFileSync(join(dir, '.gitignore'), 'node_modules\n')
     g('add', '.')
