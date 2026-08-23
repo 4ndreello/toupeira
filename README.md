@@ -84,6 +84,7 @@ worktrees parked in `/tmp` or under another agent's directory.
 | Cursor | `~/.cursor/projects/<path>` | `~/.cursor/projects/<path>` |
 | Crush | `~/.local/share/crush/projects.json` | — |
 | Copilot CLI | `~/.copilot/session-state/**/*.jsonl` | — (partitioned by session) |
+| T3 Code | `~/.t3/worktrees/<repo>/<branch>` | — (chats live in sqlite) |
 | OpenCode | — (chats live in sqlite) | — |
 | Cline | — (tasks keyed by opaque id) | — |
 | Roo Code | — (tasks keyed by opaque id) | — |
@@ -108,6 +109,7 @@ for `--days`; the directory itself always stays.
 | Claude Code | `file-history` | per-session undo history for edited files | no |
 | Claude Code | `transcripts` | cloud chats, no working directory recorded | no |
 | Codex | `shell_snapshots`, `log` | tooling leftovers | yes |
+| T3 Code | `caches`, `userdata/logs` | provider status cache, server logs | yes |
 
 An entry is one file (a paste) or one directory (a session's images), and its
 own mtime decides: a session directory holding one fresh file counts as fresh
