@@ -20,6 +20,43 @@ import * as branches from './lib/cleanups/branches.js'
 import { diskUsage, combinedSize } from './lib/sh.js'
 import { report } from './lib/doctor.js'
 
+// node's default sort already compares as strings, which is what every list here holds —
+// the comparison is spelled out so it reads as a choice rather than an omission
+const sorted = (it) => [...it].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+
+// every fake-HOME test plants files the same way: make the parent, write it, then say how
+// old it is. one helper, so the next test does not copy the trio again
+const writeAt = (home, rel, body, mtime) => {
+  const f = join(home, rel)
+  mkdirSync(dirname(f), { recursive: true })
+  writeFileSync(f, body)
+  if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
+}
+
+// browser-cache tests all start from build directories that are either aged past the gate
+// or left fresh; nothing else about the layout ever varies
+function browserHome({ aged = [], fresh = [] }) {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const old = Date.now() - 30 * 86400e3
+  for (const rel of [...aged, ...fresh]) {
+    const d = join(home, rel)
+    mkdirSync(d, { recursive: true })
+    writeFileSync(join(d, 'marker'), 'x')
+    if (aged.includes(rel)) utimesSync(d, old / 1000, old / 1000)
+  }
+  return home
+}
+
+// collection tests look their items up by the path the row shows, minus the fake HOME
+const byHomePath = (items, home) => new Map(items.map((i) => [i.path.slice(home.length), i]))
+
+// a version manager's installs directory, which is where every toolchain test begins
+function versionsHome(rel, versions) {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  for (const v of versions) mkdirSync(join(home, rel, v), { recursive: true })
+  return home
+}
+
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
   const exists = (p) => real.has(p)
@@ -41,10 +78,7 @@ test('a name that encodes no real path at all is not a vanished project', () => 
 test('every harness reads its own cwd format out of one fake HOME', () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   try {
-    const write = (rel, body) => {
-      mkdirSync(join(home, dirname(rel)), { recursive: true })
-      writeFileSync(join(home, rel), body)
-    }
+    const write = (rel, body) => writeAt(home, rel, body)
     write('.claude/projects/-tmp-claudeproj/session.jsonl', '{"cwd":"/tmp/claudeproj","x":1}\n')
     write('.codex/sessions/2026/02/26/rollout-x.jsonl', '{"payload":{"cwd":"/tmp/codexproj"}}\n')
     write('.gemini/tmp/backend/.project_root', '/tmp/geminiproj\n')
@@ -73,6 +107,20 @@ test('every category a cleanup produces has a label, and none collide', () => {
   const declared = CLEANUPS.flatMap((c) => Object.keys(c.cats))
   for (const cat of declared) assert.equal(typeof CATS[cat], 'string', `${cat} has no label`)
   assert.equal(Object.keys(CATS).length, declared.length, 'two cleanups claim the same category')
+})
+
+// one HOME with none of anyone's state: every cleanup must answer with nothing, and none
+// may throw on the directories it goes looking for
+test('an empty HOME yields nothing from every cleanup, and throws nothing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    const ctx = { repos: new Set(), days: 7, home, now: Date.now(), onProgress() {} }
+    for (const c of CLEANUPS) {
+      assert.deepEqual(c.collect(ctx).items, [], `${Object.keys(c.cats).join('/')} offered something in an empty HOME`)
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('an item inside a tree-removing item is dropped, but not under a prune', () => {
@@ -223,12 +271,7 @@ test('old chats are grouped per project, and a live project is never the target'
   const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
   try {
     const old = Date.now() - 60 * 86400e3
-    const write = (rel, cwd, mtime) => {
-      const f = join(home, rel)
-      mkdirSync(dirname(f), { recursive: true })
-      writeFileSync(f, `{"cwd":"${cwd}","pad":"${'x'.repeat(100)}"}\n`)
-      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
-    }
+    const write = (rel, cwd, mtime) => writeAt(home, rel, `{"cwd":"${cwd}","pad":"${'x'.repeat(100)}"}\n`, mtime)
     write('.claude/projects/-proj/old.jsonl', live, old)
     write('.claude/projects/-proj/fresh.jsonl', live)
     write('.claude/projects/-gone/old.jsonl', '/tmp/toupeira-does-not-exist', old)
@@ -277,12 +320,7 @@ test('agent caches offer only their idle entries, files and session directories 
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   try {
     const old = Date.now() - 30 * 86400e3
-    const write = (rel, mtime) => {
-      const f = join(home, rel)
-      mkdirSync(dirname(f), { recursive: true })
-      writeFileSync(f, 'x')
-      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
-    }
+    const write = (rel, mtime) => writeAt(home, rel, 'x', mtime)
     write('.claude/paste-cache/old.txt', old)
     write('.claude/paste-cache/fresh.txt')
     write('.claude/image-cache/deadbeef/1.png', old)
@@ -291,8 +329,8 @@ test('agent caches offer only their idle entries, files and session directories 
     utimesSync(join(home, '.claude/file-history/deadbeef'), old / 1000, old / 1000)
 
     const { items } = caches.collect({ days: 7, home, now: Date.now(), onProgress() {} })
-    const by = new Map(items.map((i) => [i.path.slice(home.length), i]))
-    assert.deepEqual([...by.keys()].sort(), ['/.claude/file-history', '/.claude/image-cache', '/.claude/paste-cache'])
+    const by = byHomePath(items, home)
+    assert.deepEqual(sorted(by.keys()), ['/.claude/file-history', '/.claude/image-cache', '/.claude/paste-cache'])
 
     const paste = by.get('/.claude/paste-cache')
     assert.deepEqual(paste.action.files, [join(home, '.claude/paste-cache/old.txt')], 'the fresh paste stays')
@@ -335,12 +373,7 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
   const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
   try {
     const old = Date.now() - 30 * 86400e3
-    const write = (rel, body, mtime) => {
-      const f = join(home, rel)
-      mkdirSync(dirname(f), { recursive: true })
-      writeFileSync(f, body)
-      if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
-    }
+    const write = (rel, body, mtime) => writeAt(home, rel, body, mtime)
     write('.copilot/session-state/deadbeef/events.jsonl', `{"type":"session.start","data":{"context":{"cwd":"${live}"}}}\n`, old)
     write('.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123/api_conversation_history.json', '[]', old)
     utimesSync(join(home, '.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123'), old / 1000, old / 1000)
@@ -352,8 +385,8 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
     assert.equal(harnessCwds(home).has(live), true, 'the copilot event log carries the working directory')
 
     const { items } = caches.collect({ days: 7, home, now: Date.now(), onProgress() {} })
-    const by = new Map(items.map((i) => [i.path.slice(home.length), i]))
-    assert.deepEqual([...by.keys()].sort(), [
+    const by = byHomePath(items, home)
+    assert.deepEqual(sorted(by.keys()), [
       '/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks',
       '/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks',
       '/.local/share/opencode/log',
@@ -404,17 +437,16 @@ function graveyardRepo() {
     g('add', file)
     gc([...args, msg])
   }
-  return { dir, g, gc, commit }
+  g('init', '-q', '-b', 'main')
+  g('config', 'user.email', 't@t')
+  g('config', 'user.name', 't')
+  commit('a', 'one\n', 'init')
+  return { dir, g, commit }
 }
 
 test('the graveyard offers merged branches whose remote side is gone, and only those', () => {
-  const { dir, g, gc, commit } = graveyardRepo()
+  const { dir, g, commit } = graveyardRepo()
   try {
-    g('init', '-q', '-b', 'main')
-    g('config', 'user.email', 't@t')
-    g('config', 'user.name', 't')
-    commit('a', 'one\n', 'init')
-
     // squash-merged, pushed, then deleted on the remote
     g('checkout', '-qb', 'gone')
     commit('b', 'two\n', 'squash me')
@@ -443,7 +475,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 
     const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [i.action.branch, i]))
-    assert.deepEqual([...by.keys()].sort(), ['gone'], 'only the branch whose remote side is gone surfaces')
+    assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
     assert.equal(by.get('gone').safe, true, 'a deleted upstream is proven gone')
     assert.match(by.get('gone').note, /merged into main/)
     assert.match(by.get('gone').note, /origin\/gone deleted/)
@@ -466,12 +498,8 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 // stripping the remote the default branch itself becomes a candidate. a fork whose local
 // main tracks a second remote that dropped it is exactly the case that reaches here.
 test('the default branch is never offered, whatever its tracking config says', () => {
-  const { dir, g, commit } = graveyardRepo()
+  const { dir, g } = graveyardRepo()
   try {
-    g('init', '-q', '-b', 'main')
-    g('config', 'user.email', 't@t')
-    g('config', 'user.name', 't')
-    commit('a', 'one\n', 'init')
     g('init', '--bare', '-q', join(dir, 'remote.git'))
     g('remote', 'add', 'origin', join(dir, 'remote.git'))
     g('push', '-qu', 'origin', 'main')
@@ -490,16 +518,12 @@ test('the default branch is never offered, whatever its tracking config says', (
 })
 
 test('mergedBranches reads the whole list, markers and all', () => {
-  const { dir, g, commit } = graveyardRepo()
+  const { dir, g } = graveyardRepo()
   try {
-    g('init', '-q', '-b', 'main')
-    g('config', 'user.email', 't@t')
-    g('config', 'user.name', 't')
-    commit('a', 'one\n', 'init')
     g('branch', 'done')
     g('worktree', 'add', '-q', join(dir, 'wt'), '-b', 'parked')
     // `* main` is the checkout, `+ parked` sits in a worktree — both are merged names
-    assert.deepEqual([...mergedBranches(dir, 'main')].sort(), ['done', 'main', 'parked'])
+    assert.deepEqual(sorted(mergedBranches(dir, 'main')), ['done', 'main', 'parked'])
     assert.deepEqual([...mergedBranches(dir, 'nope')], [], 'an unknown base is unknown, not a list')
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -524,20 +548,15 @@ test('a branch item is not deduped away by tree items in its own repo', () => {
 })
 
 test('superseded playwright builds are offered, the newest of a family never is', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = browserHome({
+    aged: [
+      '.cache/ms-playwright/chromium-100',
+      '.cache/ms-playwright/chromium_headless_shell-100',
+      '.cache/ms-playwright/firefox-50',
+    ],
+    fresh: ['.cache/ms-playwright/chromium-101'],
+  })
   try {
-    const old = Date.now() - 30 * 86400e3
-    const build = (rel, mtime) => {
-      const d = join(home, rel)
-      mkdirSync(d, { recursive: true })
-      writeFileSync(join(d, 'marker'), 'x')
-      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
-    }
-    build('.cache/ms-playwright/chromium-100', old)
-    build('.cache/ms-playwright/chromium_headless_shell-100', old)
-    build('.cache/ms-playwright/chromium-101')
-    build('.cache/ms-playwright/firefox-50', old)
-
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.equal(items.length, 1)
     const item = items[0]
@@ -559,18 +578,11 @@ test('superseded playwright builds are offered, the newest of a family never is'
 // `playwright install --only-shell` on a newer version is the normal way to end up with
 // a shell build newer than every browser build — it must not condemn the last browser
 test('a newer headless shell never supersedes the browser it is not', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = browserHome({
+    aged: ['.cache/ms-playwright/chromium-1140'],
+    fresh: ['.cache/ms-playwright/chromium_headless_shell-1148'],
+  })
   try {
-    const old = Date.now() - 30 * 86400e3
-    const build = (rel, mtime) => {
-      const d = join(home, rel)
-      mkdirSync(d, { recursive: true })
-      writeFileSync(join(d, 'marker'), 'x')
-      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
-    }
-    build('.cache/ms-playwright/chromium-1140', old)
-    build('.cache/ms-playwright/chromium_headless_shell-1148')
-
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.deepEqual(items, [], 'the only full chromium is nobody else in its family')
   } finally {
@@ -579,19 +591,11 @@ test('a newer headless shell never supersedes the browser it is not', () => {
 })
 
 test('superseded puppeteer builds are offered per family, single-build families stay', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = browserHome({
+    aged: ['.cache/puppeteer/chrome/linux-120.0.0', '.cache/puppeteer/firefox/linux-130.0'],
+    fresh: ['.cache/puppeteer/chrome/linux-121.0.0'],
+  })
   try {
-    const old = Date.now() - 30 * 86400e3
-    const build = (rel, mtime) => {
-      const d = join(home, rel)
-      mkdirSync(d, { recursive: true })
-      writeFileSync(join(d, 'marker'), 'x')
-      if (mtime) utimesSync(d, mtime / 1000, mtime / 1000)
-    }
-    build('.cache/puppeteer/chrome/linux-120.0.0', old)
-    build('.cache/puppeteer/chrome/linux-121.0.0')
-    build('.cache/puppeteer/firefox/linux-130.0', old)
-
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.equal(items.length, 1)
     assert.equal(items[0].path, join(home, '.cache/puppeteer'))
@@ -603,26 +607,9 @@ test('superseded puppeteer builds are offered per family, single-build families 
   }
 })
 
-test('a HOME with no browser caches yields nothing and throws nothing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
-  try {
-    assert.deepEqual(browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items, [])
-  } finally {
-    rmSync(home, { recursive: true, force: true })
-  }
-})
-
 test('a superseded build with a fresh mtime is held back anyway', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = browserHome({ fresh: ['.cache/ms-playwright/chromium-99', '.cache/ms-playwright/chromium-100'] })
   try {
-    const build = (rel) => {
-      const d = join(home, rel)
-      mkdirSync(d, { recursive: true })
-      writeFileSync(join(d, 'marker'), 'x')
-    }
-    build('.cache/ms-playwright/chromium-99')
-    build('.cache/ms-playwright/chromium-100')
-
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.deepEqual(items, [], 'supersession alone is not proof, the age gate holds it back')
   } finally {
@@ -673,15 +660,6 @@ test('package stores offer their own official prune when the store exists', () =
   }
 })
 
-test('a HOME with no package stores yields nothing and throws nothing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
-  try {
-    assert.deepEqual(stores.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items, [])
-  } finally {
-    rmSync(home, { recursive: true, force: true })
-  }
-})
-
 test('command actions refuse anything but a plain basename argv', () => {
   for (const cmd of [undefined, 'rm -rf /', [], [42], ['./evil']]) {
     const action = { kind: 'command' }
@@ -706,12 +684,9 @@ test('pinsMatch covers equality and segment-boundary prefixes only', () => {
 })
 
 test('idle toolchains are the unpinned, unprotected, non-newest installs', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = versionsHome('.nvm/versions/node', ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0'])
   const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
   try {
-    for (const v of ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0']) {
-      mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
-    }
     mkdirSync(join(home, '.nvm/alias'), { recursive: true })
     writeFileSync(join(home, '.nvm/alias/default'), 'v20.11.0\n')
     writeFileSync(join(repo, '.nvmrc'), '18.19.0\n')
@@ -732,11 +707,11 @@ test('idle toolchains are the unpinned, unprotected, non-newest installs', () =>
     rmSync(repo, { recursive: true, force: true })
   }
 })
+
 test('pyenv versions respect their global file and .python-version pins', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = versionsHome('.pyenv/versions', ['3.10.0', '3.11.2', '3.12.1'])
   const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
   try {
-    for (const v of ['3.10.0', '3.11.2', '3.12.1']) mkdirSync(join(home, '.pyenv/versions', v), { recursive: true })
     writeFileSync(join(home, '.pyenv/version'), '3.11.2\n')
 
     let items = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} }).items
@@ -752,10 +727,9 @@ test('pyenv versions respect their global file and .python-version pins', () => 
 })
 
 test('.tool-versions protects through its nodejs key, fallback versions included', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = versionsHome('.nvm/versions/node', ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0'])
   const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
   try {
-    for (const v of ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
     // asdf/mise fall back along the line, so 18 is pinned just as much as 20
     writeFileSync(join(repo, '.tool-versions'), 'nodejs 20.11.0 18.19.0\npython 3.12.1\n')
     const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
@@ -767,9 +741,8 @@ test('.tool-versions protects through its nodejs key, fallback versions included
 })
 
 test('an nvm default recorded as an alias resolves through the alias files', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = versionsHome('.nvm/versions/node', ['v18.19.0', 'v20.19.0', 'v22.5.0'])
   try {
-    for (const v of ['v18.19.0', 'v20.19.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
     mkdirSync(join(home, '.nvm/alias/lts'), { recursive: true })
     writeFileSync(join(home, '.nvm/alias/default'), 'lts/*\n')
     writeFileSync(join(home, '.nvm/alias/lts/*'), 'lts/iron\n')
@@ -783,9 +756,8 @@ test('an nvm default recorded as an alias resolves through the alias files', () 
 })
 
 test('a default that names no fixed version protects every install', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const home = versionsHome('.nvm/versions/node', ['v18.19.0', 'v20.11.0', 'v22.5.0'])
   try {
-    for (const v of ['v18.19.0', 'v20.11.0', 'v22.5.0']) mkdirSync(join(home, '.nvm/versions/node', v), { recursive: true })
     mkdirSync(join(home, '.nvm/alias'), { recursive: true })
     writeFileSync(join(home, '.nvm/alias/default'), 'node\n') // nvm's "whatever is newest"
 
@@ -793,15 +765,6 @@ test('a default that names no fixed version protects every install', () => {
     assert.deepEqual(items, [], 'the daily driver is unknown, so nothing is offered')
     assert.equal(kept.length, 1)
     assert.match(kept[0].why, /names no fixed version/)
-  } finally {
-    rmSync(home, { recursive: true, force: true })
-  }
-})
-
-test('a HOME with no version managers yields nothing and throws nothing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
-  try {
-    assert.deepEqual(toolchains.collect({ repos: new Set(), home, onProgress() {} }).items, [])
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
