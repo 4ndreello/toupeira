@@ -16,8 +16,10 @@ import * as caches from './lib/cleanups/caches.js'
 import * as browsers from './lib/cleanups/browsers.js'
 import * as stores from './lib/cleanups/stores.js'
 import * as toolchains from './lib/cleanups/toolchains.js'
+import * as orphans from './lib/cleanups/orphans.js'
 import * as branches from './lib/cleanups/branches.js'
 import * as worktrees from './lib/cleanups/worktrees.js'
+import { scan } from './lib/scan.js'
 import { diskUsage, combinedSize, git } from './lib/sh.js'
 import { report } from './lib/doctor.js'
 
@@ -869,5 +871,165 @@ test('docker output passes through verbatim, and a failing probe reports null in
     )
   } finally {
     rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// one repo carrying a worktree of every kind the cleanup must tell apart
+function worktreeYard() {
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-wt-'))
+  const old = new Date(Date.now() - 40 * 86400e3).toISOString()
+  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const gc = (args) =>
+    execFileSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+    }).trim()
+  const commit = (file, body, msg, aged = false) => {
+    writeFileSync(join(dir, file), body)
+    g('add', file)
+    // g eats varargs, gc one array: each gets its own shape
+    if (aged) gc(['commit', '-qm', msg])
+    else g('commit', '-qm', msg)
+  }
+  g('init', '-q', '-b', 'main')
+  g('config', 'user.email', 't@t')
+  g('config', 'user.name', 't')
+  commit('a', 'one\n', 'init')
+  commit('.gitignore', 'node_modules\n', 'ignore builds')
+  // a real upstream, so pushed branches can be told from unpushed ones
+  g('remote', 'add', 'origin', join(dir, 'origin.git'))
+  g('init', '--bare', '-q', join(dir, 'origin.git'))
+  g('push', '-qu', 'origin', 'main')
+  return { dir, g, commit }
+}
+
+test('the worktree cleanup offers the provably safe and holds the rest with reasons', () => {
+  const { dir, g, commit } = worktreeYard()
+  try {
+    // merged and idle: offered whatever its age
+    g('branch', 'done')
+    g('worktree', 'add', join(dir, 'wt-done'), 'done')
+
+    // pushed, in sync, unmerged, old — offered, but not as safe, riding a node_modules
+    g('checkout', '-qb', 'parked')
+    commit('b', 'two\n', 'parked work', true)
+    g('push', '-qu', 'origin', 'parked')
+    g('checkout', '-q', 'main')
+    g('worktree', 'add', join(dir, 'wt-parked'), 'parked')
+    mkdirSync(join(dir, 'wt-parked/node_modules/left-pad'), { recursive: true })
+    writeFileSync(join(dir, 'wt-parked/node_modules/left-pad/i.js'), 'x')
+
+    // same shape, but young — held back as recent
+    g('checkout', '-qb', 'fresh')
+    commit('c', 'three\n', 'fresh work')
+    g('push', '-qu', 'origin', 'fresh')
+    g('checkout', '-q', 'main')
+    g('worktree', 'add', join(dir, 'wt-fresh'), 'fresh')
+
+    // unmerged with no upstream: the only copy of its commits lives here
+    g('checkout', '-qb', 'lonely')
+    commit('d', 'four\n', 'unique work')
+    g('checkout', '-q', 'main')
+    g('worktree', 'add', join(dir, 'wt-lonely'), 'lonely')
+
+    // upstream exists but a local commit is ahead of it
+    g('checkout', '-qb', 'wip')
+    commit('e', 'five\n', 'pushed part')
+    g('push', '-qu', 'origin', 'wip')
+    commit('f', 'six\n', 'unpushed part')
+    g('checkout', '-q', 'main')
+    g('worktree', 'add', join(dir, 'wt-wip'), 'wip')
+
+    // dirty short-circuits everything else
+    g('worktree', 'add', join(dir, 'wt-dirty'), '-b', 'dirt')
+    writeFileSync(join(dir, 'wt-dirty/x'), 'scratch\n')
+
+    // registered but its directory is gone
+    g('worktree', 'add', join(dir, 'wt-gone'), '-b', 'gonebr')
+    rmSync(join(dir, 'wt-gone'), { recursive: true, force: true })
+
+    const { items, kept } = worktrees.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const byCat = (cat) => items.filter((i) => i.cat === cat)
+
+    assert.deepEqual(byCat('worktree-prunable').map((i) => i.path), [join(dir, 'wt-gone')])
+    assert.deepEqual(byCat('worktree-merged').map((i) => i.path), [join(dir, 'wt-done')], 'a merged worktree is offered')
+    assert.deepEqual(byCat('node_modules').map((i) => i.path), [join(dir, 'wt-parked/node_modules')], 'only an idle worktree has its node_modules listed')
+    assert.deepEqual(byCat('worktree-stale').map((i) => i.path), [join(dir, 'wt-parked')])
+    assert.equal(byCat('worktree-stale')[0].safe, false, 'an unmerged worktree is never auto-selected')
+
+    const why = (re) => kept.find((k) => re.test(k.why))
+    assert.match(why(/uncommitted changes/).path, /wt-dirty$/)
+    assert.match(why(/no upstream/).path, /wt-lonely$/)
+    assert.match(why(/unpushed commit\(s\)/).path, /wt-wip$/)
+    assert.match(why(/recent \(\d+d\)/).path, /wt-fresh$/, 'same shape as stale, held back only by age')
+
+    // both action kinds really run against the repo
+    assert.equal(remove(byCat('worktree-prunable')[0]), true, 'prune clears the dead registration')
+    const done = byCat('worktree-merged')[0]
+    assert.equal(remove(done), true)
+    assert.equal(existsSync(join(dir, 'wt-done')), false, 'worktree-remove really removes the tree')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('orphan sessions are offered only when the project they encode is really gone', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
+  const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
+  try {
+    // the transcript is authoritative: its cwd names a path that no longer exists
+    writeAt(home, '.claude/projects/-tmp-toupeira-vanished/s.jsonl', '{"cwd":"/tmp/toupeira-nowhere"}\n')
+    // cursor has no transcripts: the lossy dashed name is all there is
+    mkdirSync(join(home, '.cursor/projects', `-${live.slice(1).replace(/\//g, '-')}`), { recursive: true })
+    // a scratch name that never encoded a path must never look like a vanished project
+    mkdirSync(join(home, '.cursor/projects/empty-window'), { recursive: true })
+
+    const { items } = orphans.collect({ home, onProgress() {} })
+    assert.equal(items.length, 1, 'exactly the vanished project surfaces')
+    assert.match(items[0].note, /\/tmp\/toupeira-nowhere is gone/)
+    assert.equal(items[0].safe, true)
+    assert.equal(items[0].action.kind, 'rm')
+
+    assert.equal(remove(items[0]), true)
+    assert.equal(existsSync(join(home, '.claude/projects/-tmp-toupeira-vanished')), false, 'remove() really deletes it')
+    assert.equal(existsSync(live), true, 'the live project was never a candidate')
+    assert.equal(existsSync(join(home, '.cursor/projects/empty-window')), true, 'scratch state stays')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(live, { recursive: true, force: true })
+  }
+})
+
+test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-scan-'))
+  try {
+    const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    g('init', '-q', '-b', 'main')
+    g('config', 'user.email', 't@t')
+    g('config', 'user.name', 't')
+    writeFileSync(join(dir, 'a'), 'one\n')
+    writeFileSync(join(dir, '.gitignore'), 'node_modules\n')
+    g('add', '.')
+    g('commit', '-qm', 'init')
+    g('branch', 'done')
+    g('worktree', 'add', join(dir, 'wt'), 'done')
+    mkdirSync(join(dir, 'wt/node_modules'), { recursive: true })
+    writeFileSync(join(dir, 'wt/node_modules/blob'), 'x'.repeat(200_000))
+
+    const { items, kept, repos } = scan({ days: 7, roots: [dir], home })
+    assert.equal(repos, 1, 'the recorded root folds into one repository')
+    assert.deepEqual(kept, [])
+    assert.deepEqual(
+      items.map((i) => i.path),
+      [join(dir, 'wt')],
+      'the node_modules under the worktree is deduped away'
+    )
+    assert.ok(items[0].size >= 200_000, 'the surviving item carries the measured size')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
