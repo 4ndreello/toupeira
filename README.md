@@ -37,11 +37,12 @@ Node >= 20, no dependencies. Published as [`toupeira`](https://www.npmjs.com/pac
 
 ## The scan
 
-`scan` answers how much and roughly where, in a fixed handful of lines — the
-per-item detail lives in the picker:
+`scan` answers how much and roughly where, in a fixed handful of lines. It only
+lists candidates whose measured targets are larger than 0 B. The per-item detail
+lives in the picker:
 
 ```
-20 repo(s) · 277 item(s) · 5.1 GB reclaimable
+20 repo(s) · 273 item(s) · 5.1 GB reclaimable
 
   merged worktrees                     13   3.2 GB  ━━━━━━━━━━━━
   node_modules inside a worktree        3   2.4 GB  ━━━━━━━━━
@@ -49,10 +50,12 @@ per-item detail lives in the picker:
   old chats, project still here        24   789 MB  ━━━
   caches and history outside projects   8   123 MB
   sessions for projects that are gone 231    88 MB
-  stale worktree registrations          4     0 B
-
   6 held back, not removable — `toupeira clean` shows why
 ```
+
+Maintenance-only candidates, such as stale worktree registrations, deleted
+branches and package-store pruning, are omitted when toupeira cannot measure
+any bytes to reclaim.
 
 ## The picker
 
@@ -121,21 +124,15 @@ The same scan reports developer junk no agent wrote, but every machine grows:
 
 | category | what it offers | offered by default |
 | --- | --- | --- |
-| local branches fully absorbed elsewhere | a branch idle for `--days` whose patch is already in the default branch *and* whose remote branch was deleted | yes |
 | superseded test-runner browser builds | a playwright or puppeteer build with a newer one of its own kind already installed, idle for `--days` | yes |
-| package stores, thinned by their own tool | `npm cache verify`, `pnpm store prune` — the tool decides what goes, so nothing here is counted as reclaimable | yes |
 | toolchain versions no known project pins | an nvm or pyenv version no discovered repo asks for, that is neither the newest install nor the manager's default | no |
-
-A branch is the one target that is not a file, so its row and the log name the ref
-(`~/dev/foo#feat/x`) and it frees 0 B — the disk is not what a merged branch costs you.
 
 ## What it will not touch
 
 - your main checkout, ever
 - a worktree with uncommitted changes
 - a worktree holding commits you never pushed
-- a branch with no upstream, where the commits exist nowhere else — a branch is
-  offered only once its remote side is proven deleted, never merely absent
+- a branch with no upstream, where the commits exist nowhere else
 - your default branch, whatever its tracking config says
 - the newest toolchain version, or the one your version manager calls default — and
   no version at all when that default names a moving target like `lts/*` or `node`,
@@ -152,7 +149,9 @@ A branch is the one target that is not a file, so its row and the log name the r
 `git branch --merged` misses squash merges — the squashed commit has a
 different hash, so git swears the branch is unmerged. toupeira replays the
 branch as one commit on its merge base and asks `git cherry` whether that patch
-is already upstream, so squash-merged worktrees are correctly reported as gone.
+is already upstream, so squash-merged worktrees are correctly identified as
+merged. Branch refs have no measured disk target, so they stay hidden from the
+scan and picker.
 
 ## Flags
 
