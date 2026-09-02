@@ -1036,3 +1036,21 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('scan hides candidates with no measurable bytes', () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  try {
+    // package-store maintenance has no measurable target, while the old cache file
+    // proves a positive-size candidate still reaches the result.
+    mkdirSync(join(home, '.npm'), { recursive: true })
+    const old = Date.now() - 30 * 86400e3
+    writeAt(home, '.claude/paste-cache/old.txt', 'x', old)
+
+    const { items } = scan({ home })
+    assert.equal(items.length, 1)
+    assert.equal(items[0].cat, 'agent-cache')
+    assert.equal(items[0].size, 1)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

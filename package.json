@@ -1,6 +1,6 @@
 {
   "name": "toupeira",
- "version": "0.6.1",
+ "version": "0.6.2",
   "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
   "keywords": [
     "claude-code",
