@@ -2,3 +2,5 @@ node_modules/
 *.tgz
 coverage/
 .claude/
+dist/
+package-lock.json

@@ -1,6 +1,6 @@
 {
   "name": "toupeira",
- "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
   "keywords": [
     "claude-code",
@@ -27,20 +27,29 @@
   },
   "type": "module",
   "bin": {
-    "toupeira": "index.js"
+    "toupeira": "dist/index.js"
   },
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
-    "coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
-    "prepublishOnly": "node --test"
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "coverage": "npm run build && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-lines=79 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info dist/test/*.test.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "author": "Gabriel Andreello",
   "license": "MIT",
   "files": [
-    "index.js",
-    "lib"
-  ]
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/types.d.ts",
+    "dist/types.js",
+    "dist/lib"
+  ],
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
 }
