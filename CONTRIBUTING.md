@@ -34,6 +34,22 @@ goes up: a pull request that adds code without tests drops the average and fails
 the `coverage` job. `npm pack` must keep producing a tarball whose bin starts,
 so `files` in `package.json` must keep listing `dist`.
 
+## Pull requests
+
+Title in the same conventional format as commits. Body in three sections:
+
+- `## What & why`: what was wrong or missing, what changed, why this way.
+- `## How you verified it`: the exact commands run, not a summary. Paste them.
+- `## Impact`: what changes behaviorally, and what explicitly does not.
+
+Then the checklist, all three checked before the PR leaves draft:
+
+- the gate (`npm test`, `npm run coverage`, `npm pack`) passes locally, and the
+  PR is delivered only after the required CI checks are green
+- new or changed behavior is covered by tests, or the body explains why not
+- if an agent wrote or co-wrote the change, it is named above and the result
+  was verified independently
+
 Docs-only pull requests (`.md`, `.github`, `.gitignore`) are exempt from the
 version bump. Anything that changes shipped code must bump `version` in
 `package.json`, or the `version` job fails. After the merge, the release is a tag
