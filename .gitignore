@@ -3,4 +3,3 @@ node_modules/
 coverage/
 .claude/
 dist/
-package-lock.json

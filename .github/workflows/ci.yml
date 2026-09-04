@@ -16,9 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # dev-only dependencies (typescript for the build); no lockfile is committed,
-      # so install what package.json names before running anything
-      - run: npm install --no-audit --no-fund
+      # dev-only dependencies (typescript for the build) install from the committed
+      # lockfile. scripts stay off: nothing here needs lifecycle hooks, and running
+      # them would execute whatever a compromised dependency ships on install
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm test
 
   coverage:
@@ -33,7 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm run coverage
 
   package:
@@ -45,7 +46,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm pack
       - name: install the tarball and run the bin
         run: |
