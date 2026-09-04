@@ -4,41 +4,42 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from './index.js'
-import { summary } from './lib/ui.js'
-import { elapsed } from './lib/format.js'
-import { harnessCwds } from './lib/harnesses.js'
-import { CATS, CLEANUPS } from './lib/cleanups/index.js'
-import { dedupe, targets } from './lib/scan.js'
-import { mainRepoOf, mergedBranches } from './lib/repo.js'
-import * as transcripts from './lib/cleanups/transcripts.js'
-import * as caches from './lib/cleanups/caches.js'
-import * as browsers from './lib/cleanups/browsers.js'
-import * as stores from './lib/cleanups/stores.js'
-import * as toolchains from './lib/cleanups/toolchains.js'
-import * as orphans from './lib/cleanups/orphans.js'
-import * as branches from './lib/cleanups/branches.js'
-import * as worktrees from './lib/cleanups/worktrees.js'
-import { scan } from './lib/scan.js'
-import { diskUsage, combinedSize, git } from './lib/sh.js'
-import { report } from './lib/doctor.js'
+import { decodeProjectDir, parseWorktrees, isContentMerged, human, remove, treeRows, banner } from '../index.js'
+import { summary } from '../lib/ui.js'
+import { elapsed } from '../lib/format.js'
+import { harnessCwds } from '../lib/harnesses.js'
+import { CATS, CLEANUPS } from '../lib/cleanups/index.js'
+import { dedupe, targets } from '../lib/scan.js'
+import { mainRepoOf, mergedBranches } from '../lib/repo.js'
+import * as transcripts from '../lib/cleanups/transcripts.js'
+import * as caches from '../lib/cleanups/caches.js'
+import * as browsers from '../lib/cleanups/browsers.js'
+import * as stores from '../lib/cleanups/stores.js'
+import * as toolchains from '../lib/cleanups/toolchains.js'
+import * as orphans from '../lib/cleanups/orphans.js'
+import * as branches from '../lib/cleanups/branches.js'
+import * as worktrees from '../lib/cleanups/worktrees.js'
+import { scan } from '../lib/scan.js'
+import { diskUsage, combinedSize, git } from '../lib/sh.js'
+import { report } from '../lib/doctor.js'
+import type { Item } from '../types.js'
 
-// node's default sort already compares as strings, which is what every list here holds —
+// node's default sort already compares as strings, which is what every list here holds -
 // the comparison is spelled out so it reads as a choice rather than an omission
-const sorted = (it) => [...it].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+const sorted = (it: Iterable<string>): string[] => [...it].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
 // every fake-HOME test plants files the same way: make the parent, write it, then say how
 // old it is. one helper, so the next test does not copy the trio again
-const writeAt = (home, rel, body, mtime) => {
+const writeAt = (home: string, rel: string, body: string, mtime?: number): void => {
   const f = join(home, rel)
   mkdirSync(dirname(f), { recursive: true })
   writeFileSync(f, body)
-  if (mtime) utimesSync(f, mtime / 1000, mtime / 1000)
+  if (mtime !== undefined) utimesSync(f, mtime / 1000, mtime / 1000)
 }
 
 // browser-cache tests all start from build directories that are either aged past the gate
 // or left fresh; nothing else about the layout ever varies
-function browserHome({ aged = [], fresh = [] }) {
+function browserHome({ aged = [], fresh = [] }: { aged?: string[]; fresh?: string[] }): string {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const old = Date.now() - 30 * 86400e3
   for (const rel of [...aged, ...fresh]) {
@@ -51,10 +52,10 @@ function browserHome({ aged = [], fresh = [] }) {
 }
 
 // collection tests look their items up by the path the row shows, minus the fake HOME
-const byHomePath = (items, home) => new Map(items.map((i) => [i.path.slice(home.length), i]))
+const byHomePath = (items: Item[], home: string): Map<string, Item> => new Map(items.map((i) => [i.path.slice(home.length), i]))
 
 // a version manager's installs directory, which is where every toolchain test begins
-function versionsHome(rel, versions) {
+function versionsHome(rel: string, versions: string[]): string {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   for (const v of versions) mkdirSync(join(home, rel, v), { recursive: true })
   return home
@@ -62,11 +63,11 @@ function versionsHome(rel, versions) {
 
 // every git-behavior test drives the real binary into its own temp dir: one runner, so no
 // test copies the execFileSync scaffolding again
-const gitIn = (dir) => (...args) =>
+const gitIn = (dir: string) => (...args: string[]): string =>
   execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
 
 // the same runner under a fixed clock, for tests that care when a commit was made
-const gitAt = (dir, iso) => (args) =>
+const gitAt = (dir: string, iso: string) => (args: string[]): string =>
   execFileSync('git', args, {
     cwd: dir,
     encoding: 'utf8',
@@ -75,7 +76,7 @@ const gitAt = (dir, iso) => (args) =>
   }).trim()
 
 // an empty repo on main with an identity, which is where every repo-behavior test begins
-const initRepo = (dir) => {
+const initRepo = (dir: string): ((...args: string[]) => string) => {
   const g = gitIn(dir)
   g('init', '-q', '-b', 'main')
   g('config', 'user.email', 't@t')
@@ -85,12 +86,12 @@ const initRepo = (dir) => {
 
 test('decodeProjectDir resolves dashes in real directory names', () => {
   const real = new Set(['/home', '/home/me', '/home/me/dev', '/home/me/dev/toupeira'])
-  const exists = (p) => real.has(p)
+  const exists = (p: string): boolean => real.has(p)
   assert.deepEqual(decodeProjectDir('-home-me-dev-toupeira', exists), { path: '/home/me/dev/toupeira', exists: true, matched: 4 })
 })
 
 test('decodeProjectDir reports a vanished path instead of guessing', () => {
-  const exists = (p) => p === '/tmp'
+  const exists = (p: string): boolean => p === '/tmp'
   const r = decodeProjectDir('-tmp-agent-box-9DSMZ6', exists)
   assert.equal(r.exists, false)
   assert.equal(r.path, '/tmp/agent-box-9DSMZ6')
@@ -104,7 +105,7 @@ test('a name that encodes no real path at all is not a vanished project', () => 
 test('every harness reads its own cwd format out of one fake HOME', () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   try {
-    const write = (rel, body) => writeAt(home, rel, body)
+    const write = (rel: string, body: string): void => writeAt(home, rel, body)
     write('.claude/projects/-tmp-claudeproj/session.jsonl', '{"cwd":"/tmp/claudeproj","x":1}\n')
     write('.codex/sessions/2026/02/26/rollout-x.jsonl', '{"payload":{"cwd":"/tmp/codexproj"}}\n')
     write('.gemini/tmp/backend/.project_root', '/tmp/geminiproj\n')
@@ -140,7 +141,7 @@ test('every category a cleanup produces has a label, and none collide', () => {
 test('an empty HOME yields nothing from every cleanup, and throws nothing', () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
-    const ctx = { repos: new Set(), days: 7, home, now: Date.now(), onProgress() {} }
+    const ctx = { repos: new Set<string>(), days: 7, home, now: Date.now(), onProgress() {} }
     for (const c of CLEANUPS) {
       assert.deepEqual(c.collect(ctx).items, [], `${Object.keys(c.cats).join('/')} offered something in an empty HOME`)
     }
@@ -169,11 +170,11 @@ test('parseWorktrees keeps paths with spaces and flags prunable', () => {
       'worktree /tmp/gone\nHEAD def456\nbranch refs/heads/feat/x\nprunable gitdir file points to non-existent location\n'
   )
   assert.equal(wt.length, 2)
-  assert.equal(wt[0].path, '/home/me/my repo')
-  assert.equal(wt[0].branch, 'main')
-  assert.equal(wt[1].branch, 'feat/x')
-  assert.equal(wt[1].prunable, true)
-  assert.equal(wt[0].prunable, false)
+  assert.equal(wt[0]!.path, '/home/me/my repo')
+  assert.equal(wt[0]!.branch, 'main')
+  assert.equal(wt[1]!.branch, 'feat/x')
+  assert.equal(wt[1]!.prunable, true)
+  assert.equal(wt[0]!.prunable, false)
 })
 
 test('isContentMerged catches a squash merge that git branch --merged misses', () => {
@@ -216,7 +217,7 @@ test('human', () => {
 
 test('remove refuses a path outside the category it belongs to', () => {
   assert.throws(
-    () => remove({ path: '/home/me/importante', action: { kind: 'rm', guard: '/.claude/projects/' } }),
+    () => remove({ cat: 't', repo: null, path: '/home/me/importante', size: 0, safe: true, note: 't', action: { kind: 'rm', guard: '/.claude/projects/' } } as unknown as Item),
     /outside its category/
   )
 })
@@ -227,13 +228,13 @@ test('treeRows orders categories by total size and only expands what is open', (
     { cat: 'big', size: 4 },
     { cat: 'big', size: 5 },
   ]
-  const collapsed = treeRows(items, new Set())
+  const collapsed = treeRows(items, new Set<string>())
   assert.deepEqual(collapsed.map((r) => r.cat), ['small', 'big'])
   assert.equal(collapsed.every((r) => r.type === 'cat'), true)
 
-  const open = treeRows(items, new Set(['big']))
+  const open = treeRows(items, new Set<string>(['big']))
   assert.deepEqual(open.map((r) => `${r.type}:${r.cat}`), ['cat:small', 'cat:big', 'item:big', 'item:big'])
-  assert.deepEqual(open.filter((r) => r.type === 'item').map((r) => r.idx), [1, 2])
+  assert.deepEqual(open.filter((r): r is { type: 'item'; cat: string; idx: number } => r.type === 'item').map((r) => r.idx), [1, 2])
 })
 
 test('banner degrades to the bare name when the terminal is too narrow', () => {
@@ -242,9 +243,9 @@ test('banner degrades to the bare name when the terminal is too narrow', () => {
 
 test('banner ground line is exactly as wide as the widest row', () => {
   const rows = banner(120)
-  const ground = rows.at(-1)
+  const ground = rows.at(-1)!
   assert.equal(Math.max(...rows.map((r) => r.length)), ground.length)
-  assert.equal(ground.startsWith('~~""((('), true)
+  assert.equal(ground!.startsWith('~~""((('), true)
 })
 
 test('banner treats a terminal reporting zero columns as unknown, not tiny', () => {
@@ -255,7 +256,7 @@ test('the CLI runs when invoked through a symlink, the way npm installs its bin'
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-bin-'))
   try {
     const link = join(dir, 'toupeira')
-    symlinkSync(new URL('./index.js', import.meta.url).pathname, link)
+    symlinkSync(new URL('../index.js', import.meta.url).pathname, link)
     const out = execFileSync(process.execPath, [link, '--help'], { encoding: 'utf8' })
     assert.match(out, /clean up what coding agents leave behind/)
   } finally {
@@ -270,13 +271,13 @@ test('elapsed', () => {
 
 test('summary prints one line per category, biggest first, no per-item rows', () => {
   const items = [
-    { cat: 'node_modules', size: 300, path: '/a' },
-    { cat: 'worktree-merged', size: 100, path: '/b' },
-    { cat: 'worktree-merged', size: 100, path: '/c' },
+    { cat: 'node_modules', size: 300 },
+    { cat: 'worktree-merged', size: 100 },
+    { cat: 'worktree-merged', size: 100 },
   ]
-  const lines = []
+  const lines: string[] = []
   const real = console.log
-  console.log = (s) => lines.push(String(s).replace(/\x1b\[[0-9;]*m/g, ''))
+  console.log = (s: unknown): void => { lines.push(String(s).replace(/\x1b\[[0-9;]*m/g, '')); }
   try {
     summary({ items, kept: [{ path: '/d', why: 'dirty' }], repos: 2, total: 500 })
   } finally {
@@ -294,7 +295,7 @@ test('old chats are grouped per project, and a live project is never the target'
   const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
   try {
     const old = Date.now() - 60 * 86400e3
-    const write = (rel, cwd, mtime) => writeAt(home, rel, `{"cwd":"${cwd}","pad":"${'x'.repeat(100)}"}\n`, mtime)
+    const write = (rel: string, cwd: string, mtime?: number): void => writeAt(home, rel, `{"cwd":"${cwd}","pad":"${'x'.repeat(100)}"}\n`, mtime)
     write('.claude/projects/-proj/old.jsonl', live, old)
     write('.claude/projects/-proj/fresh.jsonl', live)
     write('.claude/projects/-gone/old.jsonl', '/tmp/toupeira-does-not-exist', old)
@@ -306,12 +307,12 @@ test('old chats are grouped per project, and a live project is never the target'
       assert.equal(i.path, live, 'the item points at the project, for display only')
       assert.equal(i.safe, false, 'a deleted chat does not come back')
       assert.deepEqual(
-        i.action.files.map((f) => f.endsWith('old.jsonl') || f.endsWith('rollout.jsonl')),
-        i.action.files.map(() => true),
+        (i.action as unknown as { files: string[] }).files.map((f: string) => f.endsWith('old.jsonl') || f.endsWith('rollout.jsonl')),
+        (i.action as unknown as { files: string[] }).files.map(() => true),
         'only the aged files are listed',
       )
     }
-    assert.deepEqual(items.map((i) => i.action.files.length), [1, 1])
+    assert.deepEqual(items.map((i) => (i.action as unknown as { files: string[] }).files.length), [1, 1])
     for (const i of items) {
       assert.equal(i.span, 'oldest 60d - newest 60d', 'the row carries the labelled age of the chats on offer')
       assert.match(i.note, /1 chat\(s\), 60-60d old/, 'the note carries the count and the age')
@@ -323,9 +324,9 @@ test('old chats are grouped per project, and a live project is never the target'
 })
 
 test('remove refuses a files action that reaches outside its harness directory', () => {
-  const item = { path: '/home/me/dev/repo', action: { kind: 'rm-files', root: '/home/me/.claude/projects', files: ['/home/me/dev/repo/src/index.js'] } }
+  const item = { cat: 't', repo: null, path: '/home/me/dev/repo', size: 0, safe: true, note: 't', action: { kind: 'rm-files', root: '/home/me/.claude/projects', files: ['/home/me/dev/repo/src/index.js'] } } as unknown as Item;
   assert.throws(() => remove(item), /refused, outside its category/)
-  item.action.files = ['/home/me/.claude/projects/-x/a.jsonl', '/etc/passwd']
+  ;(item.action as unknown as { files: string[] }).files = ['/home/me/.claude/projects/-x/a.jsonl', '/etc/passwd']
   assert.throws(() => remove(item), /refused, outside its category/)
 })
 
@@ -343,7 +344,7 @@ test('agent caches offer only their idle entries, files and session directories 
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   try {
     const old = Date.now() - 30 * 86400e3
-    const write = (rel, mtime) => writeAt(home, rel, 'x', mtime)
+    const write = (rel: string, mtime?: number): void => writeAt(home, rel, 'x', mtime)
     write('.claude/paste-cache/old.txt', old)
     write('.claude/paste-cache/fresh.txt')
     write('.claude/image-cache/deadbeef/1.png', old)
@@ -355,13 +356,13 @@ test('agent caches offer only their idle entries, files and session directories 
     const by = byHomePath(items, home)
     assert.deepEqual(sorted(by.keys()), ['/.claude/file-history', '/.claude/image-cache', '/.claude/paste-cache'])
 
-    const paste = by.get('/.claude/paste-cache')
-    assert.deepEqual(paste.action.files, [join(home, '.claude/paste-cache/old.txt')], 'the fresh paste stays')
-    assert.equal(paste.safe, true)
-    assert.equal(paste.span, 'oldest 30d - newest 30d')
+    const paste = by.get('/.claude/paste-cache')!
+    assert.deepEqual((paste.action as unknown as { files: string[] }).files, [join(home, '.claude/paste-cache/old.txt')], 'the fresh paste stays')
+    assert.equal(paste!.safe, true)
+    assert.equal(paste!.span, 'oldest 30d - newest 30d')
     // the whole session directory is one entry: the images inside it are not listed
-    assert.deepEqual(by.get('/.claude/image-cache').action.files, [join(home, '.claude/image-cache/deadbeef')])
-    assert.equal(by.get('/.claude/file-history').safe, false, 'undo history needs a look first')
+    assert.deepEqual((by.get('/.claude/image-cache')!.action as unknown as { files: string[] }).files, [join(home, '.claude/image-cache/deadbeef')])
+    assert.equal(by.get('/.claude/file-history')!.safe, false, 'undo history needs a look first')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -374,12 +375,12 @@ test('a cache entry is removed by its list, and only from inside its own directo
     const session = join(dir, 'deadbeef')
     mkdirSync(session, { recursive: true })
     writeFileSync(join(session, '1.png'), 'x')
-    const item = { path: dir, action: { kind: 'rm-files', root: dir, files: [session] } }
+    const item: Item = { cat: 't', repo: null, path: dir, size: 0, safe: true, note: 't', action: { kind: 'rm-files', root: dir, files: [session] } }
     assert.equal(remove(item), true)
     assert.equal(existsSync(session), false, 'the session directory goes')
     assert.equal(existsSync(dir), true, 'the cache directory itself stays')
 
-    item.action.files = [join(home, '.claude/settings.json')]
+    ;(item.action as unknown as { files: string[] }).files = [join(home, '.claude/settings.json')]
     assert.throws(() => remove(item), /refused, outside its category/)
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -387,7 +388,7 @@ test('a cache entry is removed by its list, and only from inside its own directo
 })
 
 test('a chat list still refuses anything that is not a .jsonl', () => {
-  const item = { path: '/tmp/proj', action: { kind: 'rm-files', root: '/home/me/.claude/projects', ext: '.jsonl', files: ['/home/me/.claude/projects/-x/notes.md'] } }
+  const item: Item = { cat: 't', repo: null, path: '/tmp/proj', size: 0, safe: true, note: 't', action: { kind: 'rm-files', root: '/home/me/.claude/projects', ext: '.jsonl', files: ['/home/me/.claude/projects/-x/notes.md'] } };
   assert.throws(() => remove(item), /refused, outside its category/)
 })
 
@@ -396,7 +397,7 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
   const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
   try {
     const old = Date.now() - 30 * 86400e3
-    const write = (rel, body, mtime) => writeAt(home, rel, body, mtime)
+    const write = (rel: string, body: string, mtime?: number): void => writeAt(home, rel, body, mtime)
     write('.copilot/session-state/deadbeef/events.jsonl', `{"type":"session.start","data":{"context":{"cwd":"${live}"}}}\n`, old)
     write('.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123/api_conversation_history.json', '[]', old)
     utimesSync(join(home, '.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/123'), old / 1000, old / 1000)
@@ -415,13 +416,13 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
       '/.local/share/opencode/log',
       '/.local/share/opencode/tool-output',
     ])
-    assert.equal(by.get('/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks').safe, false, 'task history is chat content')
-    assert.equal(by.get('/.local/share/opencode/tool-output').safe, true, 'spilled tool output is derived state')
+    assert.equal(by.get('/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks')!.safe, false, 'task history is chat content')
+    assert.equal(by.get('/.local/share/opencode/tool-output')!.safe, true, 'spilled tool output is derived state')
 
     const chats = transcripts.collect({ days: 7, home, now: Date.now(), onProgress() {} }).items
     assert.equal(chats.length, 1)
-    assert.equal(chats[0].repo, live, 'copilot chats group under the project like the other jsonl harnesses')
-    assert.match(chats[0].note, /^copilot-cli:/)
+    assert.equal(chats[0]!.repo, live, 'copilot chats group under the project like the other jsonl harnesses')
+    assert.match(chats[0]!.note, /^copilot-cli:/)
   } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(live, { recursive: true, force: true })
@@ -432,7 +433,7 @@ test('t3 code feeds its parked worktrees into the regular worktree cleanup', () 
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const repoDir = mkdtempSync(join(tmpdir(), 'toupeira-t3repo-'))
   try {
-    const g = (a) => git(a, repoDir)
+    const g = (a: string[]): string | null => git(a, repoDir)
     g(['init', '-q', '-b', 'main'])
     g(['config', 'user.email', 't@t'])
     g(['config', 'user.name', 't'])
@@ -446,9 +447,9 @@ test('t3 code feeds its parked worktrees into the regular worktree cleanup', () 
     g(['worktree', 'add', wt, '-b', 'feature-x', 'main'])
 
     assert.equal(harnessCwds(home).has(wt), true, 'the parked workspace counts as a recorded working directory')
-    assert.equal(realpathSync(mainRepoOf(wt)), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
+    assert.equal(realpathSync(mainRepoOf(wt)!), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
 
-    const repos = new Set([...harnessCwds(home)].map(mainRepoOf).filter(Boolean))
+    const repos = new Set<string>([...harnessCwds(home)].map((p) => mainRepoOf(p)).filter((v): v is string => Boolean(v)))
     const { items } = worktrees.collect({ repos, days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => [i.cat, i.path]), [['worktree-merged', wt]], 'a clean merged t3 workspace is offered for removal')
   } finally {
@@ -462,7 +463,7 @@ test('t3 code logs thin by entry age under their nested cache root', () => {
   try {
     const fresh = Date.now() - 86400e3
     const old = Date.now() - 30 * 86400e3
-    const touch = (rel, body, mtime) => {
+    const touch = (rel: string, body: string, mtime: number): void => {
       const f = join(home, rel)
       mkdirSync(dirname(f), { recursive: true })
       writeFileSync(f, body)
@@ -477,9 +478,9 @@ test('t3 code logs thin by entry age under their nested cache root', () => {
     assert.equal(by.size, 2)
     assert.equal(by.has('/.t3/caches'), true)
     assert.equal(by.has('/.t3/userdata/logs'), true)
-    assert.equal(by.get('/.t3/caches').safe, true)
-    const logs = by.get('/.t3/userdata/logs')
-    assert.deepEqual(logs.action.files, [join(home, '.t3/userdata/logs/server.trace.ndjson.5')], 'the rotated trace goes, the active log stays')
+    assert.equal(by.get('/.t3/caches')!.safe, true)
+    const logs = by.get('/.t3/userdata/logs')!
+    assert.deepEqual((logs.action as unknown as { files: string[] }).files, [join(home, '.t3/userdata/logs/server.trace.ndjson.5')], 'the rotated trace goes, the active log stays')
     assert.equal(logs.safe, true, 'server logs are derived state')
     assert.match(logs.note, /^t3-code:/)
   } finally {
@@ -495,7 +496,7 @@ test('du measures directories on bsd as well as gnu', () => {
     const dir = join(home, 'cache')
     mkdirSync(dir)
     writeFileSync(join(dir, 'blob'), 'x'.repeat(200_000))
-    assert.ok(diskUsage([dir]).get(dir) >= 200_000, 'a directory measures its contents')
+    assert.ok((diskUsage([dir]).get(dir) ?? 0) >= 200_000, 'a directory measures its contents')
     assert.ok(combinedSize([dir]) >= 200_000, 'the deduped headline is not zero')
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -508,7 +509,7 @@ function graveyardRepo() {
   const old = new Date(Date.now() - 40 * 86400e3).toISOString()
   const g = gitIn(dir)
   const gc = gitAt(dir, old)
-  const commit = (file, body, msg, args = ['commit', '-qm']) => {
+  const commit = (file: string, body: string, msg: string, args: string[] = ['commit', '-qm']): void => {
     writeFileSync(join(dir, file), body)
     g('add', file)
     gc([...args, msg])
@@ -549,20 +550,20 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
     g('branch', 'old-wt', 'gone')
     g('worktree', 'add', join(dir, 'wt'), 'old-wt')
 
-    const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
-    const by = new Map(items.map((i) => [i.action.branch, i]))
+    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [(i.action as unknown as { branch: string }).branch, i]))
 assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
-    assert.equal(by.get('gone').safe, true, 'a deleted upstream is proven gone')
-    assert.match(by.get('gone').note, /merged into main/)
-    assert.match(by.get('gone').note, /origin\/gone deleted/)
+    assert.equal(by.get('gone')!.safe, true, 'a deleted upstream is proven gone')
+    assert.match(by.get('gone')!.note, /merged into main/)
+    assert.match(by.get('gone')!.note, /origin\/gone deleted/)
     for (const i of items) {
       assert.equal(i.path, dir, 'the item points at the repo, display only')
-      assert.equal(i.label, `${dir}#${i.action.branch}`, 'the label names the ref that goes')
+      assert.equal(i.label, `${dir}#${(i.action as unknown as { branch: string }).branch}`, 'the label names the ref that goes')
       assert.deepEqual(targets(i), [], 'a ref frees nothing on disk, so nothing is measured')
       assert.equal(i.action.kind, 'branch-delete')
     }
 
-    remove(by.get('gone'))
+    remove(by.get('gone')!)
     assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
     assert.match(g('branch', '--list', 'local-only'), /local-only/, 'a never-pushed branch stays, absorbed or not')
   } finally {
@@ -570,7 +571,7 @@ assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side
   }
 })
 
-// defaultBranch answers `origin/main`, which never equals a local branch name — without
+// defaultBranch answers `origin/main`, which never equals a local branch name , without
 // stripping the remote the default branch itself becomes a candidate. a fork whose local
 // main tracks a second remote that dropped it is exactly the case that reaches here.
 test('the default branch is never offered, whatever its tracking config says', () => {
@@ -586,8 +587,8 @@ test('the default branch is never offered, whatever its tracking config says', (
     g('checkout', '-qb', 'work')
 
     assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main', 'setup: the base is remote-qualified')
-    const { items } = branches.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
-    assert.deepEqual(items.map((i) => i.action.branch), [], 'main is the default branch, not a graveyard candidate')
+    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items.map((i) => (i.action as unknown as { branch: string }).branch), [], 'main is the default branch, not a graveyard candidate')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -598,7 +599,7 @@ test('mergedBranches reads the whole list, markers and all', () => {
   try {
     g('branch', 'done')
     g('worktree', 'add', '-q', join(dir, 'wt'), '-b', 'parked')
-    // `* main` is the checkout, `+ parked` sits in a worktree — both are merged names
+    // `* main` is the checkout, `+ parked` sits in a worktree , both are merged names
 assert.deepEqual(sorted(mergedBranches(dir, 'main')), ['done', 'main', 'parked'])
     assert.deepEqual([...mergedBranches(dir, 'nope')], [], 'an unknown base is unknown, not a list')
   } finally {
@@ -607,9 +608,9 @@ assert.deepEqual(sorted(mergedBranches(dir, 'main')), ['done', 'main', 'parked']
 })
 
 test('branch-delete refuses anything that is not a plain branch name', () => {
-  for (const bad of ['HEAD', '-oProxyCommand=x', 'a..b', 'x.lock', 42]) {
+  for (const bad of ['HEAD', '-oProxyCommand=x', 'a..b', 'x.lock', 42] as unknown[]) {
     assert.throws(
-      () => remove({ path: '/repo', action: { kind: 'branch-delete', repo: '/repo', branch: bad } }),
+      () => remove({ cat: 't', repo: null, path: '/repo', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/repo', branch: bad as unknown as string } } as unknown as Item),
       /refused, unsafe branch name/
     )
   }
@@ -635,16 +636,16 @@ test('superseded playwright builds are offered, the newest of a family never is'
   try {
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.equal(items.length, 1)
-    const item = items[0]
+    const item = items[0]!
     assert.equal(item.cat, 'browser-cache')
     assert.equal(item.path, join(home, '.cache/ms-playwright'), 'the tool root is display only')
     assert.deepEqual(
-      item.action.files,
+      (item.action as unknown as { files: string[] }).files,
       [join(home, '.cache/ms-playwright/chromium-100')],
       'the newest chromium, the lone firefox and the lone headless shell stay'
     )
     assert.equal(item.safe, true)
-    assert.match(item.span, /^oldest \d+d - newest \d+d$/)
+    assert.match(item.span!, /^oldest \d+d - newest \d+d$/)
     assert.match(item.note, /playwright/)
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -652,7 +653,7 @@ test('superseded playwright builds are offered, the newest of a family never is'
 })
 
 // `playwright install --only-shell` on a newer version is the normal way to end up with
-// a shell build newer than every browser build — it must not condemn the last browser
+// a shell build newer than every browser build , it must not condemn the last browser
 test('a newer headless shell never supersedes the browser it is not', () => {
   const home = browserHome({
     aged: ['.cache/ms-playwright/chromium-1140'],
@@ -674,10 +675,10 @@ test('superseded puppeteer builds are offered per family, single-build families 
   try {
     const { items } = browsers.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.equal(items.length, 1)
-    assert.equal(items[0].path, join(home, '.cache/puppeteer'))
-    assert.deepEqual(items[0].action.files, [join(home, '.cache/puppeteer/chrome/linux-120.0.0')])
-    assert.equal(items[0].safe, true)
-    assert.match(items[0].note, /puppeteer/)
+    assert.equal(items[0]!.path, join(home, '.cache/puppeteer'))
+    assert.deepEqual((items[0]!.action as unknown as { files: string[] }).files, [join(home, '.cache/puppeteer/chrome/linux-120.0.0')])
+    assert.equal(items[0]!.safe, true)
+    assert.match(items[0]!.note, /puppeteer/)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -700,12 +701,12 @@ test('a browser build is removed by its list, and only from inside the tool root
     const build = join(root, 'chromium-100')
     mkdirSync(build, { recursive: true })
     writeFileSync(join(build, 'chrome'), 'x')
-    const item = { cat: 'browser-cache', repo: null, path: root, size: 0, safe: true, action: { kind: 'rm-files', root, files: [build] } }
+    const item: Item = { cat: 'browser-cache', repo: null, path: root, size: 0, safe: true, note: 't', action: { kind: 'rm-files', root, files: [build] } }
     assert.equal(remove(item), true)
     assert.equal(existsSync(build), false, 'the superseded build goes')
     assert.equal(existsSync(root), true, 'the tool root stays')
 
-    item.action.files = [join(home, '.cache/other/chromium-99')]
+    ;(item.action as unknown as { files: string[] }).files = [join(home, '.cache/other/chromium-99')]
     assert.throws(() => remove(item), /refused, outside its category/)
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -723,8 +724,8 @@ test('package stores offer their own official prune when the store exists', () =
     const { items } = stores.collect({ days: 7, home, now: Date.now(), onProgress() {} })
     assert.equal(items.length, 2)
     assert.deepEqual(items.map((i) => i.path.slice(home.length)), ['/.npm', '/.local/share/pnpm/store'])
-    assert.deepEqual(items[0].action.cmd, ['npm', 'cache', 'verify'])
-    assert.deepEqual(items[1].action.cmd, ['pnpm', 'store', 'prune'])
+    assert.deepEqual((items[0]!.action as unknown as { cmd: string[] }).cmd, ['npm', 'cache', 'verify'])
+    assert.deepEqual((items[1]!.action as unknown as { cmd: string[] }).cmd, ['pnpm', 'store', 'prune'])
     for (const i of items) {
       assert.equal(i.cat, 'store-prune')
       assert.equal(i.safe, true, 'official maintenance commands are safe by definition')
@@ -737,17 +738,17 @@ test('package stores offer their own official prune when the store exists', () =
 })
 
 test('command actions refuse anything but a plain basename argv', () => {
-  for (const cmd of [undefined, 'rm -rf /', [], [42], ['./evil']]) {
-    const action = { kind: 'command' }
+  for (const cmd of [undefined, 'rm -rf /', [], [42], ['./evil']] as unknown[]) {
+    const action: { kind: string; cmd?: unknown } = { kind: 'command' }
     if (cmd !== undefined) action.cmd = cmd
-    assert.throws(() => remove({ path: '/irrelevant', action }), /refused, malformed command/)
+    assert.throws(() => remove({ cat: 't', repo: null, path: '/irrelevant', size: 0, safe: true, note: 't', action: action as unknown as Item['action'] } as unknown as Item), /refused, malformed command/)
   }
 })
 
 test('a command action runs the exact argv and reports failure without throwing', () => {
-  const ok = { path: '/irrelevant', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(0)'] } }
+  const ok = { cat: 't', repo: null, path: '/irrelevant', size: 0, safe: true, note: 't', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(0)'] } } as unknown as Item;
   assert.equal(remove(ok), true)
-  const dead = { path: '/irrelevant', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(3)'] } }
+  const dead = { cat: 't', repo: null, path: '/irrelevant', size: 0, safe: true, note: 't', action: { kind: 'command', cmd: ['node', '-e', 'process.exit(3)'] } } as unknown as Item;
   assert.equal(remove(dead), false)
 })
 
@@ -769,14 +770,14 @@ test('idle toolchains are the unpinned, unprotected, non-newest installs', () =>
 
     const { items } = toolchains.collect({ repos: new Set([repo]), home, onProgress() {} })
     assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['v16.20.0'], 'pinned, default and newest all stay')
-    assert.equal(items[0].safe, false, 'repos no agent touched are invisible, so nothing is provably safe')
-    assert.match(items[0].note, /no pin among 1 repo\(s\)/)
-    assert.equal(items[0].action.kind, 'rm')
+    assert.equal(items[0]!.safe, false, 'repos no agent touched are invisible, so nothing is provably safe')
+    assert.match(items[0]!.note, /no pin among 1 repo\(s\)/)
+    assert.equal(items[0]!.action.kind, 'rm')
 
-    remove(items[0])
+    remove(items[0]!)
     assert.equal(existsSync(join(home, '.nvm/versions/node/v16.20.0')), false, 'remove() really deletes it')
 
-    const outside = { path: '/usr', action: { kind: 'rm', guard: `${home}/.nvm/versions/node/` } }
+    const outside = { cat: 't', repo: null, path: '/usr', size: 0, safe: true, note: 't', action: { kind: 'rm', guard: `${home}/.nvm/versions/node/` } } as unknown as Item
     assert.throws(() => remove(outside), /outside its category/)
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -824,7 +825,7 @@ test('an nvm default recorded as an alias resolves through the alias files', () 
     writeFileSync(join(home, '.nvm/alias/lts/*'), 'lts/iron\n')
     writeFileSync(join(home, '.nvm/alias/lts/iron'), 'v20.19.0\n')
 
-    const { items } = toolchains.collect({ repos: new Set(), home, onProgress() {} })
+    const { items } = toolchains.collect({ repos: new Set<string>(), home, onProgress() {} })
     assert.deepEqual(items.map((i) => i.path.split('/').at(-1)), ['v18.19.0'], 'the default resolves to v20, v22 is newest')
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -837,10 +838,10 @@ test('a default that names no fixed version protects every install', () => {
     mkdirSync(join(home, '.nvm/alias'), { recursive: true })
     writeFileSync(join(home, '.nvm/alias/default'), 'node\n') // nvm's "whatever is newest"
 
-    const { items, kept } = toolchains.collect({ repos: new Set(), home, onProgress() {} })
+    const { items, kept } = toolchains.collect({ repos: new Set<string>(), home, onProgress() {} })
     assert.deepEqual(items, [], 'the daily driver is unknown, so nothing is offered')
-    assert.equal(kept.length, 1)
-    assert.match(kept[0].why, /names no fixed version/)
+    assert.equal(kept!.length, 1)
+    assert.match(kept![0]!.why, /names no fixed version/)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -857,9 +858,9 @@ test('doctor measures the well-known spots that exist, biggest first', () => {
     const { rows } = report({ home, runDocker: () => null })
     assert.deepEqual(rows.map((r) => r.name), ['gradle caches', 'pip cache'], 'missing spots contribute nothing')
     assert.deepEqual(rows.map((r) => r.path), [join(home, '.gradle/caches'), join(home, '.cache/pip')])
-    assert.ok(rows[0].size >= 300_000)
-    assert.ok(rows[1].size > 0)
-    assert.ok(rows[0].size > rows[1].size, 'sorted by size, biggest first')
+    assert.ok(rows[0]!.size >= 300_000)
+    assert.ok(rows[1]!.size > 0)
+    assert.ok(rows[0]!.size > rows[1]!.size, 'sorted by size, biggest first')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -894,7 +895,7 @@ function worktreeYard() {
   const old = new Date(Date.now() - 40 * 86400e3).toISOString()
   const g = gitIn(dir)
   const gc = gitAt(dir, old)
-  const commit = (file, body, msg, aged = false) => {
+  const commit = (file: string, body: string, msg: string, aged = false): void => {
     writeFileSync(join(dir, file), body)
     g('add', file)
     // g eats varargs, gc one array: each gets its own shape
@@ -918,7 +919,7 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     g('branch', 'done')
     g('worktree', 'add', join(dir, 'wt-done'), 'done')
 
-    // pushed, in sync, unmerged, old — offered, but not as safe, riding a node_modules
+    // pushed, in sync, unmerged, old , offered, but not as safe, riding a node_modules
     g('checkout', '-qb', 'parked')
     commit('b', 'two\n', 'parked work', true)
     g('push', '-qu', 'origin', 'parked')
@@ -927,7 +928,7 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     mkdirSync(join(dir, 'wt-parked/node_modules/left-pad'), { recursive: true })
     writeFileSync(join(dir, 'wt-parked/node_modules/left-pad/i.js'), 'x')
 
-    // same shape, but young — held back as recent
+    // same shape, but young , held back as recent
     g('checkout', '-qb', 'fresh')
     commit('c', 'three\n', 'fresh work')
     g('push', '-qu', 'origin', 'fresh')
@@ -956,24 +957,24 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     g('worktree', 'add', join(dir, 'wt-gone'), '-b', 'gonebr')
     rmSync(join(dir, 'wt-gone'), { recursive: true, force: true })
 
-    const { items, kept } = worktrees.collect({ repos: new Set([dir]), days: 7, now: Date.now(), onProgress() {} })
-    const byCat = (cat) => items.filter((i) => i.cat === cat)
+    const { items, kept } = worktrees.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const byCat = (cat: string): typeof items => items.filter((i) => i.cat === cat)
 
     assert.deepEqual(byCat('worktree-prunable').map((i) => i.path), [join(dir, 'wt-gone')])
     assert.deepEqual(byCat('worktree-merged').map((i) => i.path), [join(dir, 'wt-done')], 'a merged worktree is offered')
     assert.deepEqual(byCat('node_modules').map((i) => i.path), [join(dir, 'wt-parked/node_modules')], 'only an idle worktree has its node_modules listed')
     assert.deepEqual(byCat('worktree-stale').map((i) => i.path), [join(dir, 'wt-parked')])
-    assert.equal(byCat('worktree-stale')[0].safe, false, 'an unmerged worktree is never auto-selected')
+    assert.equal(byCat('worktree-stale')[0]!.safe, false, 'an unmerged worktree is never auto-selected')
 
-    const why = (re) => kept.find((k) => re.test(k.why))
-    assert.match(why(/uncommitted changes/).path, /wt-dirty$/)
-    assert.match(why(/no upstream/).path, /wt-lonely$/)
-    assert.match(why(/unpushed commit\(s\)/).path, /wt-wip$/)
-    assert.match(why(/recent \(\d+d\)/).path, /wt-fresh$/, 'same shape as stale, held back only by age')
+    const why = (re: RegExp): { path: string; why: string } | undefined => kept!.find((k) => re.test(k.why))
+    assert.match(why(/uncommitted changes/)!.path, /wt-dirty$/)
+    assert.match(why(/no upstream/)!.path, /wt-lonely$/)
+    assert.match(why(/unpushed commit\(s\)/)!.path, /wt-wip$/)
+    assert.match(why(/recent \(\d+d\)/)!.path, /wt-fresh$/, 'same shape as stale, held back only by age')
 
     // both action kinds really run against the repo
-    assert.equal(remove(byCat('worktree-prunable')[0]), true, 'prune clears the dead registration')
-    const done = byCat('worktree-merged')[0]
+    assert.equal(remove(byCat('worktree-prunable')[0]!), true, 'prune clears the dead registration')
+    const done = byCat('worktree-merged')[0]!
     assert.equal(remove(done), true)
     assert.equal(existsSync(join(dir, 'wt-done')), false, 'worktree-remove really removes the tree')
   } finally {
@@ -994,11 +995,11 @@ test('orphan sessions are offered only when the project they encode is really go
 
     const { items } = orphans.collect({ home, onProgress() {} })
     assert.equal(items.length, 1, 'exactly the vanished project surfaces')
-    assert.match(items[0].note, /\/tmp\/toupeira-nowhere is gone/)
-    assert.equal(items[0].safe, true)
-    assert.equal(items[0].action.kind, 'rm')
+    assert.match(items[0]!.note, /\/tmp\/toupeira-nowhere is gone/)
+    assert.equal(items[0]!.safe, true)
+    assert.equal(items[0]!.action.kind, 'rm')
 
-    assert.equal(remove(items[0]), true)
+    assert.equal(remove(items[0]!), true)
     assert.equal(existsSync(join(home, '.claude/projects/-tmp-toupeira-vanished')), false, 'remove() really deletes it')
     assert.equal(existsSync(live), true, 'the live project was never a candidate')
     assert.equal(existsSync(join(home, '.cursor/projects/empty-window')), true, 'scratch state stays')
@@ -1030,7 +1031,7 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => 
       [join(dir, 'wt')],
       'the node_modules under the worktree is deduped away'
     )
-    assert.ok(items[0].size >= 200_000, 'the surviving item carries the measured size')
+    assert.ok(items[0]!.size >= 200_000, 'the surviving item carries the measured size')
   } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })
@@ -1048,8 +1049,8 @@ test('scan hides candidates with no measurable bytes', () => {
 
     const { items } = scan({ home })
     assert.equal(items.length, 1)
-    assert.equal(items[0].cat, 'agent-cache')
-    assert.equal(items[0].size, 1)
+    assert.equal(items[0]!.cat, 'agent-cache')
+    assert.equal(items[0]!.size, 1)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

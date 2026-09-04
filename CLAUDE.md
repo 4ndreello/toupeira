@@ -5,19 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm test                              # node --test, the whole suite
-node --test test.js                   # same thing, explicit
-node --test --test-name-pattern human # a single test, by name
-node index.js                         # scan (read-only) against the real HOME
-node index.js clean --days 30         # the picker
+npm test                              # build, then node --test over dist
+node --test dist/test/toupeira.test.js # same suite, explicit, after npm run build
+node --test --test-name-pattern human dist/test/toupeira.test.js # one test, by name
+node dist/index.js                    # scan (read-only) against the real HOME
+node dist/index.js clean --days 30    # the picker
 npm pack                              # what CI also checks: the tarball must run
 npm run coverage                      # lcov into coverage/, for editor gutters
 ```
 
-No dependencies, no lockfile, no build step, no linter. Node >= 20, ESM only
-(`"type": "module"`). CI runs on pull requests only, across Node 20/22/24, plus
-a `package` job that installs the packed tarball and runs the bin — so `files`
-in `package.json` must keep listing `lib`.
+Dev-only dependencies (typescript for the build) with a committed lockfile, no linter.
+Node >= 20, ESM only (`"type": "module"`). CI runs on pull requests only, across
+Node 20/22/24, plus a `package` job that installs the packed tarball and runs
+the bin — so `files` in `package.json` must keep listing `dist`.
 
 ## Quality gate
 
@@ -48,8 +48,9 @@ zero. Hence the split: smells there, coverage here.
 
 Two consequences worth knowing before reading a Sonar verdict:
 
-- It never reads a config file from this repo, so it does not know `test.js` is a
-  test and will file hotspots against its `mkdtempSync` fixtures.
+- It never reads a config file from this repo, so it does not know
+  `src/test/toupeira.test.ts` is a test and will file hotspots against its
+  `mkdtempSync` fixtures.
 - `S4036` (a tool resolved through `PATH`) and `S6959` (`reduce` with no initial
   value) both fire here and are both wrong: resolving `git`, `du` and `docker`
   through `PATH` is the point, and every `reduce` in this codebase sits behind a
@@ -59,23 +60,23 @@ Two consequences worth knowing before reading a Sonar verdict:
 
 A scan is one pipeline: discover repos → collect items → measure → dedupe → act.
 
-1. **discover** — `lib/harnesses.js` reads where each coding agent recorded its
-   working directories. `lib/repo.js:mainRepoOf` resolves each cwd to its main
+1. **discover** — `src/lib/harnesses.ts` reads where each coding agent recorded its
+   working directories. `src/lib/repo.ts:mainRepoOf` resolves each cwd to its main
    repository (via `--git-common-dir`), so a worktree cwd folds into its parent.
    Nothing crawls the disk; there is no config file.
-2. **collect** — `lib/scan.js` passes one `ctx` (`{ repos, days, home, now, onProgress }`)
-   to every cleanup in `lib/cleanups/index.js`. Each returns `{ items, kept }`.
+2. **collect** — `src/lib/scan.ts` passes one `ctx` (`{ repos, days, home, now, onProgress }`)
+   to every cleanup in `src/lib/cleanups/index.ts`. Each returns `{ items, kept }`.
    `kept` is what was deliberately *not* offered, with a reason — it is displayed,
    not removable.
-3. **measure** — `scan.js:targets` says what an item frees: its `action.files` when
+3. **measure** — `src/lib/scan.ts:targets` says what an item frees: its `action.files` when
    it has a list, its `path` otherwise. Both size paths go through it, since `path`
-   is no longer always the target. `lib/sh.js:diskUsage` runs one `du` per directory
+   is no longer always the target. `src/lib/sh.ts:diskUsage` runs one `du` per directory
    on purpose (a single batched `du` counts a hardlinked file once, so pnpm/bun
    worktrees would report near-zero) and one `statSync` per plain file, because
    transcripts arrive by the thousand. `combinedSize` is the deduped headline total.
-4. **dedupe** — `scan.js:dedupe` drops any item nested under an item whose action
+4. **dedupe** — `src/lib/scan.ts:dedupe` drops any item nested under an item whose action
    is `tree: true`; removing a worktree already takes its `node_modules`.
-5. **act** — `lib/actions.js:remove` looks the action up in `ACTIONS` and enforces
+5. **act** — `src/lib/actions.ts:remove` looks the action up in `ACTIONS` and enforces
    `action.guard` (a substring the path must contain) *outside* the table, so a new
    action cannot forget the path check. An action carrying `files` is guarded per
    entry instead: every entry must sit under `action.root`, plus end in
@@ -103,49 +104,49 @@ category touches no ui file.
 Extension points are tables, not plugins. The contract lives here, not in the
 README — the README is the npm page and stays user-facing.
 
-- `lib/harnesses.js` — `cwds()` plus optional `projects: { dir, target(dir, name) }`,
+- `src/lib/harnesses.ts` — `cwds()` plus optional `projects: { dir, target(dir, name) }`,
   `transcripts: { dir, depth }` and `caches: { root, dirs: [{ name, what, safe }] }`.
   `target()` returning `null` means "cannot tell", and nothing untellable is ever
   removed.
-- `lib/cleanups/*.js` — export `cats` + `collect(ctx)`, add one line to `index.js`.
-- `lib/actions.js` — `{ tree, frees?, run }` per action kind. `frees: false` says the
+- `src/lib/cleanups/*.ts` — export `cats` + `collect(ctx)`, add one line to `index.ts`.
+- `src/lib/actions.ts` — `{ tree, frees?, run }` per action kind. `frees: false` says the
   target is not a path (a ref, a tool's own prune), so `targets()` measures nothing
   for it.
 
 ### Load-bearing details
 
-- **Squash merges.** `git branch --merged` misses them. `repo.js:isContentMerged`
+- **Squash merges.** `git branch --merged` misses them. `src/lib/repo.ts:isContentMerged`
   replays the branch tree as one commit on the merge base and asks `git cherry`
   whether the patch is already upstream. Do not "simplify" this back to `--merged`.
   Its `--merged` listing is per-repo work, so a caller looping over branches reads
-  `repo.js:mergedBranches` once and passes the set in — otherwise every candidate
+  `src/lib/repo.ts:mergedBranches` once and passes the set in — otherwise every candidate
   forks a full history walk.
 - **`defaultBranch()` answers `origin/main`, not `main`.** It reads
   `refs/remotes/origin/HEAD`, so the result is remote-qualified and can never equal a
   local branch name. Anything comparing a local name against it has to strip the
-  remote first (`branches.js:localName`), or the default branch becomes a candidate
+  remote first (`src/lib/cleanups/branches.ts:localName`), or the default branch becomes a candidate
   for `git branch -D`.
 - **`branch-gone` needs a deleted upstream, not a missing one.** The evidence is a
   tracking config whose remote ref is gone. No config at all is no evidence — that
   branch may hold the only copy of its commits — so it is skipped, and nothing in
   this category is ever labelled from push state that was never checked.
 - **A non-concrete toolchain default protects everything.** nvm writes whatever the
-  user typed (`lts/*`, `node`, a named alias). `toolchains.js:defaultPins` follows
+  user typed (`lts/*`, `node`, a named alias). `src/lib/cleanups/toolchains.ts:defaultPins` follows
   alias files a few hops; a target that never becomes a version means the daily
   driver is unknown, so that manager offers nothing and says why via `kept`.
 - **A headless shell is not a browser.** playwright names its shell builds
   `chromium_headless_shell-<build>`; they are their own family, so
   `playwright install --only-shell` of a newer build cannot make the last full
   chromium look superseded.
-- **`remove()` returning `false` means it did not happen.** `index.js` turns that
+- **`remove()` returning `false` means it did not happen.** `src/index.ts` turns that
   into a `✗` and adds nothing to `freed`, so an absent or wedged tool never prints a
   success. `command` also runs under a timeout for the same reason.
 - **Lossy project dir names.** Agents encode `/` as `-`, so `/a/b-c` and `/a-b/c`
-  collide. `sessions.js:decodeProjectDir` walks the real filesystem greedily and
+  collide. `src/lib/sessions.ts:decodeProjectDir` walks the real filesystem greedily and
   returns `matched` — the count of resolved segments. `matched === 0` means the
   name was never an encoded path (e.g. Cursor's `empty-window`), *not* a project
   that vanished; treating those as orphans would delete live state.
-- **Transcripts are huge.** `sessions.js:headMatch` reads only the first 256 KB;
+- **Transcripts are huge.** `src/lib/sessions.ts:headMatch` reads only the first 256 KB;
   `cwd` lives in the header.
 - **`agent-cache` points at a cache directory.** Same shape as `transcript-old`:
   `path` is the directory, for display and the size sort, while `action.files` are
@@ -159,9 +160,9 @@ README — the README is the npm page and stays user-facing.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
-- **`lib/sh.js:git` swallows errors and returns `null`.** Callers must treat `null`
+- **`src/lib/sh.ts:git` swallows errors and returns `null`.** Callers must treat `null`
   as "unknown", never as "no".
-- **The bin is a symlink** when installed by npm, so `index.js` compares
+- **The bin is a symlink** when installed by npm, so `src/index.ts` compares
   `import.meta.url` against `realpathSync(process.argv[1])` before running `main()`.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`
   honored); logging failures never block a cleanup.
@@ -179,7 +180,7 @@ gh release create "v$(node -p "require('./package.json').version")" --generate-n
 
 ## Testing style
 
-`test.js` is one flat file of `node:test` cases, no framework, no fixtures. Tests
+`src/test/toupeira.test.ts` is one flat file of `node:test` cases, no framework, no fixtures. Tests
 that need agent state build a fake `HOME` under `mkdtempSync` and pass it in — every
 `home`-taking function exists so this stays possible. Git behavior is tested by
 `execFileSync`-ing real `git` into a temp repo. Keep new tests in the same file and
@@ -192,4 +193,4 @@ the same style.
 - Comments explain *why* a non-obvious choice was made (the `du`-per-path decision,
   the squash-merge probe); they are lowercase and English.
 - User-facing output is lowercase English. ASCII face, box-drawing wordmark only
-  under a UTF-8 locale (`logo.js:utf8`).
+  under a UTF-8 locale (`src/lib/logo.ts:utf8`).

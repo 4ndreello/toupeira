@@ -16,31 +16,37 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # no dependencies, so there is nothing to install and no lockfile to ci from
+      # dev-only dependencies (typescript for the build) install from the committed
+      # lockfile. scripts stay off: nothing here needs lifecycle hooks, and running
+      # them would execute whatever a compromised dependency ships on install
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm test
 
   coverage:
     # a ratchet, not a target: this number goes up over time and never down, so a
     # pull request that adds code without tests drops the average and fails here.
     # its own job because --test-coverage-lines does not exist on node 20, which
-    # the matrix above still has to cover
+    # the matrix above still has to cover. the gate measures dist, so the build
+    # runs first through npm run coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --test --experimental-test-coverage --test-coverage-lines=79
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npm run coverage
 
   package:
-    # the published tarball is its own failure mode: index.js imports lib/, and a
-    # "files" field that forgets it installs a package that cannot start.
+    # the published tarball is its own failure mode: dist/ is built by prepack and
+    # must be listed in "files", or the install below gets a package that cannot start
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm pack
       - name: install the tarball and run the bin
         run: |
