@@ -22,6 +22,7 @@ import * as worktrees from '../lib/cleanups/worktrees.js'
 import { scan } from '../lib/scan.js'
 import { diskUsage, combinedSize, git } from '../lib/sh.js'
 import { report } from '../lib/doctor.js'
+import { count, resetCounts, timed } from '../lib/profile.js'
 import type { Item } from '../types.js'
 
 // node's default sort already compares as strings, which is what every list here holds -
@@ -570,7 +571,6 @@ assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side
     rmSync(dir, { recursive: true, force: true })
   }
 })
-
 // defaultBranch answers `origin/main`, which never equals a local branch name , without
 // stripping the remote the default branch itself becomes a candidate. a fork whose local
 // main tracks a second remote that dropped it is exactly the case that reaches here.
@@ -1053,5 +1053,69 @@ test('scan hides candidates with no measurable bytes', () => {
     assert.equal(items[0]!.size, 1)
   } finally {
     rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// profiling is opt-in stderr only: with the env unset the wrappers are passthrough
+test('profile: timed and counts stay silent unless TOUPEIRA_PROFILE is set', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    delete process.env['TOUPEIRA_PROFILE']
+    resetCounts()
+    assert.equal(timed('x', () => 42), 42)
+    count('git')
+    assert.equal(out, '', 'nothing on stdout or stderr when profiling is off')
+
+    process.env['TOUPEIRA_PROFILE'] = '1'
+    assert.equal(timed('x', () => 42), 42)
+    assert.match(out, /prof x \d/, 'one stderr line per phase when profiling is on')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+  }
+})
+
+test('profile: scan emits per-phase lines and a count block when enabled', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    process.env['TOUPEIRA_PROFILE'] = '1'
+    resetCounts()
+    scan({ home })
+    assert.match(out, /prof collect /, 'every cleanup collect is timed')
+    assert.match(out, /prof measure diskUsage/, 'the du/stat phase is timed')
+    assert.match(out, /prof count measured-paths/, 'the count block closes the scan')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('profile: verbose logs every git call', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    process.env['TOUPEIRA_PROFILE'] = 'verbose'
+    resetCounts()
+    assert.match(git(['--version'], tmpdir()) ?? '', /git version/, 'the call itself still works')
+    assert.match(out, /prof git --version/, 'verbose names the exact argv forked')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
   }
 })

@@ -4,6 +4,7 @@ import { diskUsage } from "./sh.js";
 import { mainRepoOf } from "./repo.js";
 import { harnessCwds } from "./harnesses.js";
 import { CLEANUPS } from "./cleanups/index.js";
+import { count, reportCounts, timed } from "./profile.js";
 import { ACTIONS } from "./actions.js";
 import type { Item } from "../types.js";
 
@@ -45,13 +46,16 @@ export function scan(
   const items: Item[] = [];
   const kept: { path: string; why: string }[] = [];
   for (const cleanup of CLEANUPS) {
-    const out = cleanup.collect(ctx);
+    // first cat key names the phase in prof lines, so the report reads
+    // collect worktree-merged instead of collect 3
+    const out = timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
     items.push(...out.items);
     if (out.kept) kept.push(...out.kept);
   }
 
   const paths = [...new Set(items.flatMap(targets))].filter((p) => existsSync(p));
-  const sizes = diskUsage(paths, onProgress);
+  count("measured-paths", paths.length);
+  const sizes = timed("measure diskUsage", () => diskUsage(paths, onProgress));
   for (const i of items) i.size = targets(i).reduce((s, p) => s + (sizes.get(p) ?? 0), 0);
 
   // only items with a positive measured target contribute to the reclaimable result. this
@@ -59,5 +63,6 @@ export function scan(
   // picker and out of yes.
   const final = dedupe(items).filter((i) => i.size > 0);
   final.sort((a, b) => b.size - a.size);
+  reportCounts();
   return { items: final, kept, repos: repos.size };
 }
