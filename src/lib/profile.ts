@@ -2,7 +2,8 @@
 // normal path pays one env read per phase and nothing else. TOUPEIRA_PROFILE=1 (or
 // --profile) prints one stderr line per phase, =verbose also logs every git call.
 export function profileEnabled(): boolean {
-  return process.env["TOUPEIRA_PROFILE"] === "1" || process.env["TOUPEIRA_PROFILE"] === "verbose" || process.argv.includes("--profile");
+  const val = process.env["TOUPEIRA_PROFILE"];
+  return val === "1" || val === "true" || val === "verbose" || process.argv.includes("--profile");
 }
 
 export function verboseProfile(): boolean {

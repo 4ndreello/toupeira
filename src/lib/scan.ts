@@ -4,7 +4,7 @@ import { diskUsage } from "./sh.js";
 import { mainRepoOf } from "./repo.js";
 import { harnessCwds } from "./harnesses.js";
 import { CLEANUPS } from "./cleanups/index.js";
-import { count, reportCounts, timed } from "./profile.js";
+import { count, reportCounts, resetCounts, timed } from "./profile.js";
 import { ACTIONS } from "./actions.js";
 import type { Item } from "../types.js";
 
@@ -35,15 +35,19 @@ export interface ScanResult {
 export function scan(
   { days = 7, roots = [], home = HOME, onProgress = () => {} }: { days?: number; roots?: string[]; home?: string; onProgress?: (msg: string) => void } = {},
 ): ScanResult {
-  onProgress("reading agent sessions");
-  const repos = new Set<string>();
-  // many agent cwds fold into the same repository, so resolve each input once
-  const resolved = new Map<string, string | null>();
-  for (const p of [...harnessCwds(home), ...roots]) {
-    if (!resolved.has(p)) resolved.set(p, mainRepoOf(p));
-    const r = resolved.get(p);
-    if (r) repos.add(r);
-  }
+  resetCounts();
+  const repos = timed("discovery", () => {
+    onProgress("reading agent sessions");
+    const repos = new Set<string>();
+    // many agent cwds fold into the same repository, so resolve each input once
+    const resolved = new Map<string, string | null>();
+    for (const p of [...harnessCwds(home), ...roots]) {
+      if (!resolved.has(p)) resolved.set(p, mainRepoOf(p));
+      const r = resolved.get(p);
+      if (r) repos.add(r);
+    }
+    return repos;
+  });
 
   const ctx = { repos, days, home, now: Date.now(), onProgress, cache: new Map<string, unknown>() };
   const items: Item[] = [];

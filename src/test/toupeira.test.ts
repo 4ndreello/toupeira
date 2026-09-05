@@ -1120,6 +1120,11 @@ test('profile: timed and counts stay silent unless TOUPEIRA_PROFILE is set', () 
     process.env['TOUPEIRA_PROFILE'] = '1'
     assert.equal(timed('x', () => 42), 42)
     assert.match(out, /prof x \d/, 'one stderr line per phase when profiling is on')
+
+    out = ''
+    process.env['TOUPEIRA_PROFILE'] = 'true'
+    assert.equal(timed('y', () => 84), 84)
+    assert.match(out, /prof y \d/, 'profiling is also enabled with TOUPEIRA_PROFILE=true')
   } finally {
     process.stderr.write = realWrite
     if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
@@ -1138,6 +1143,7 @@ test('profile: scan emits per-phase lines and a count block when enabled', () =>
     process.env['TOUPEIRA_PROFILE'] = '1'
     resetCounts()
     scan({ home })
+    assert.match(out, /prof discovery /, 'discovery phase is timed')
     assert.match(out, /prof collect /, 'every cleanup collect is timed')
     assert.match(out, /prof measure diskUsage/, 'the du/stat phase is timed')
     assert.match(out, /prof count measured-paths/, 'the count block closes the scan')

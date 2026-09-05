@@ -29,7 +29,6 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
     const base = cachedDefaultBranch(ctx, repo);
     if (!base) continue;
     const localBase = localName(cachedRemotes(ctx, repo), base);
-    const current = git(["symbolic-ref", "--short", "HEAD"], repo);
     // a branch checked out in any worktree cannot go: deleting it breaks that worktree
     const busy = new Set(parseWorktrees(cachedWorktrees(ctx, repo)).map((w) => w.branch));
     const list = git(["for-each-ref", "refs/heads", "--format=%(refname:short)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track)%09%(upstream:remoteref)"], repo);
@@ -45,7 +44,7 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
       if (f.length !== 5) continue;
       const [branch, rawTs, upstream, track, remoteref] = f;
       const ts = Number(rawTs) * 1000;
-      if (!branch || !ts || branch === base || branch === localBase || branch === current || busy.has(branch)) continue;
+      if (!branch || !ts || branch === base || branch === localBase || busy.has(branch)) continue;
       const age = Math.floor((now - ts) / DAY);
       if (age < days) continue;
 

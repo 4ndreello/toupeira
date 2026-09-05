@@ -24,14 +24,14 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
     onProgress(`worktrees ${++n}/${repos.size} ${short(repo)}`);
     const list = cachedWorktrees(ctx, repo);
     if (!list) continue;
+    const candidates = parseWorktrees(list).filter((w) => w.path !== repo && !w.bare);
+    if (candidates.length === 0) continue;
     const base = cachedDefaultBranch(ctx, repo);
     // read once per repo, not once per worktree: isContentMerged would fork a full
     // history walk for every candidate otherwise
     const mergedSet = cachedMerged(ctx, repo, base);
 
-    for (const w of parseWorktrees(list)) {
-      if (w.path === repo || w.bare) continue;
-
+    for (const w of candidates) {
       if (w.prunable || !existsSync(w.path)) {
         items.push({ cat: "worktree-prunable", repo, path: w.path, size: 0, safe: true, note: "registered here, but the directory is gone", action: { kind: "prune", repo } });
         continue;
