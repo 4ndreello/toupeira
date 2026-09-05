@@ -29,6 +29,8 @@ export interface Ctx {
   home: string;
   now: number;
   onProgress: (msg: string) => void;
+  // per-scan memo for repeated per-repo reads, created in scan(), never global
+  cache?: Map<string, unknown>;
 }
 
 export interface CollectResult {

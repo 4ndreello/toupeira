@@ -22,6 +22,7 @@ import * as worktrees from '../lib/cleanups/worktrees.js'
 import { scan } from '../lib/scan.js'
 import { diskUsage, combinedSize, git } from '../lib/sh.js'
 import { report } from '../lib/doctor.js'
+import { count, resetCounts, timed } from '../lib/profile.js'
 import type { Item } from '../types.js'
 
 // node's default sort already compares as strings, which is what every list here holds -
@@ -571,6 +572,53 @@ assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side
   }
 })
 
+// the upstream reading comes from the same for-each-ref fork as the listing:
+// gone (even slashed or never-fetched) surfaces, synced, local and tag
+// upstreams stay. a local upstream used to fail open via refs/remotes/./name.
+test('the graveyard reads gone state from the listing, three forks lighter', () => {
+  const { dir, g, commit } = graveyardRepo()
+  try {
+    g('init', '--bare', '-q', join(dir, 'remote.git'))
+    g('remote', 'add', 'origin', join(dir, 'remote.git'))
+
+    // pushed and still there: track is empty, stays
+    g('checkout', '-qb', 'synced')
+    commit('s', 's\n', 'synced work')
+    g('push', '-qu', 'origin', 'synced')
+
+    // slashed name, merged, remote side deleted: gone
+    g('branch', 'feat/vanished', 'main')
+    g('push', '-qu', 'origin', 'feat/vanished')
+    g('update-ref', '-d', 'refs/remotes/origin/feat/vanished')
+
+    // tracking config hand-pointed at a ref that never existed: same evidence
+    // as a deletion under both readings, still offered
+    g('branch', 'ghost', 'main')
+    g('config', 'branch.ghost.remote', 'origin')
+    g('config', 'branch.ghost.merge', 'refs/heads/ghost')
+
+    // a local upstream always resolves: not gone, stays
+    g('branch', 'loc', 'main')
+    g('config', 'branch.loc.remote', '.')
+    g('config', 'branch.loc.merge', 'refs/heads/main')
+
+    // a tag is not a branch remote side: stays
+    g('tag', 'v1', 'main')
+    g('branch', 'tagged', 'main')
+    g('config', 'branch.tagged.remote', 'origin')
+    g('config', 'branch.tagged.merge', 'refs/tags/v1')
+
+    g('checkout', '-q', 'main')
+
+    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const by = new Map(items.map((i) => [(i.action as unknown as { branch: string }).branch, i]))
+    assert.deepEqual(sorted(by.keys()), ['feat/vanished', 'ghost'], 'only gone remote sides surface')
+    assert.match(by.get('feat/vanished')!.note, /origin\/feat\/vanished deleted/, 'the note names the whole upstream short')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // defaultBranch answers `origin/main`, which never equals a local branch name , without
 // stripping the remote the default branch itself becomes a candidate. a fork whose local
 // main tracks a second remote that dropped it is exactly the case that reaches here.
@@ -1053,5 +1101,134 @@ test('scan hides candidates with no measurable bytes', () => {
     assert.equal(items[0]!.size, 1)
   } finally {
     rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// profiling is opt-in stderr only: with the env unset the wrappers are passthrough
+test('profile: timed and counts stay silent unless TOUPEIRA_PROFILE is set', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    delete process.env['TOUPEIRA_PROFILE']
+    resetCounts()
+    assert.equal(timed('x', () => 42), 42)
+    count('git')
+    assert.equal(out, '', 'nothing on stdout or stderr when profiling is off')
+
+    process.env['TOUPEIRA_PROFILE'] = '1'
+    assert.equal(timed('x', () => 42), 42)
+    assert.match(out, /prof x \d/, 'one stderr line per phase when profiling is on')
+
+    out = ''
+    process.env['TOUPEIRA_PROFILE'] = 'true'
+    assert.equal(timed('y', () => 84), 84)
+    assert.match(out, /prof y \d/, 'profiling is also enabled with TOUPEIRA_PROFILE=true')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+  }
+})
+
+test('profile: scan emits per-phase lines and a count block when enabled', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    process.env['TOUPEIRA_PROFILE'] = '1'
+    resetCounts()
+    scan({ home })
+    assert.match(out, /prof discovery /, 'discovery phase is timed')
+    assert.match(out, /prof collect /, 'every cleanup collect is timed')
+    assert.match(out, /prof measure diskUsage/, 'the du/stat phase is timed')
+    assert.match(out, /prof count measured-paths/, 'the count block closes the scan')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// duplicate roots resolve once: discovery memos mainRepoOf by input path
+test('scan resolves duplicate roots once', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-dup-'))
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    initRepo(dir)
+    process.env['TOUPEIRA_PROFILE'] = 'verbose'
+    resetCounts()
+    const { repos } = scan({ roots: [dir, dir], home })
+    assert.equal(repos, 1)
+    assert.equal(
+      out.split('\n').filter((l) => l === 'prof git rev-parse --path-format=absolute --git-common-dir').length,
+      1,
+      'the second identical cwd reuses the first resolution'
+    )
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// a ctx cache shares per-repo reads between runs: the second collect forks less
+test('a shared ctx cache serves per-repo reads from memory', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-cache-'))
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    const g = initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'one\n')
+    g('add', '.')
+    g('commit', '-qm', 'init')
+    process.env['TOUPEIRA_PROFILE'] = 'verbose'
+    resetCounts()
+    const ctx = { repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {}, cache: new Map<string, unknown>() }
+    const first = branches.collect(ctx)
+    out = ''
+    const second = branches.collect(ctx)
+    assert.deepEqual(second, first, 'cached reads answer the same')
+    assert.ok(!out.includes('prof git symbolic-ref --short refs/remotes/origin/HEAD'), 'the base came from cache')
+    assert.ok(out.includes('prof git for-each-ref'), 'uncached reads still fork')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('profile: verbose logs every git call', () => {
+  const realEnv = process.env['TOUPEIRA_PROFILE']
+  const realWrite = process.stderr.write
+  let out = ''
+  process.stderr.write = ((s: unknown): boolean => { out += String(s); return true }) as typeof process.stderr.write
+  try {
+    process.env['TOUPEIRA_PROFILE'] = 'verbose'
+    resetCounts()
+    assert.match(git(['--version'], tmpdir()) ?? '', /git version/, 'the call itself still works')
+    assert.match(out, /prof git --version/, 'verbose names the exact argv forked')
+  } finally {
+    process.stderr.write = realWrite
+    if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
+    else process.env['TOUPEIRA_PROFILE'] = realEnv
+    resetCounts()
   }
 })

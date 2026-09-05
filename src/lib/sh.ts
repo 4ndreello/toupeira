@@ -1,7 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { count, verboseProfile } from "./profile.js";
 
 export function git(args: string[], cwd: string): string | null {
+  // counted always, printed per call only at verbose: a squash-merge check forks
+  // five times per branch, which is exactly what that line makes visible
+  count("git");
+  if (verboseProfile()) process.stderr.write(`prof git ${args.join(" ")}\n`);
   try {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64e6 }).trim();
   } catch {
@@ -10,6 +15,7 @@ export function git(args: string[], cwd: string): string | null {
 }
 
 function du(args: string[]): string {
+  count("du");
   try {
     return execFileSync("du", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64e6 });
   } catch (e) {
@@ -33,9 +39,11 @@ export function diskUsage(paths: string[], onProgress: (msg: string) => void = (
     // a single file is one stat, not one fork: transcripts arrive by the thousand
     const st = statSync(p, { throwIfNoEntry: false });
     if (st?.isFile()) {
+      count("stat-file");
       sizes.set(p, st.size);
       continue;
     }
+    count("du-dir");
     const m = du(["-sk", "--", p]).match(/^(\d+)\t/);
     sizes.set(p, m?.[1] ? Number(m[1]) * KB : 0);
   }

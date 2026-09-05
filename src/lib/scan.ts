@@ -4,6 +4,7 @@ import { diskUsage } from "./sh.js";
 import { mainRepoOf } from "./repo.js";
 import { harnessCwds } from "./harnesses.js";
 import { CLEANUPS } from "./cleanups/index.js";
+import { count, reportCounts, resetCounts, timed } from "./profile.js";
 import { ACTIONS } from "./actions.js";
 import type { Item } from "../types.js";
 
@@ -34,24 +35,34 @@ export interface ScanResult {
 export function scan(
   { days = 7, roots = [], home = HOME, onProgress = () => {} }: { days?: number; roots?: string[]; home?: string; onProgress?: (msg: string) => void } = {},
 ): ScanResult {
-  onProgress("reading agent sessions");
-  const repos = new Set<string>();
-  for (const p of [...harnessCwds(home), ...roots]) {
-    const r = mainRepoOf(p);
-    if (r) repos.add(r);
-  }
+  resetCounts();
+  const repos = timed("discovery", () => {
+    onProgress("reading agent sessions");
+    const repos = new Set<string>();
+    // many agent cwds fold into the same repository, so resolve each input once
+    const resolved = new Map<string, string | null>();
+    for (const p of [...harnessCwds(home), ...roots]) {
+      if (!resolved.has(p)) resolved.set(p, mainRepoOf(p));
+      const r = resolved.get(p);
+      if (r) repos.add(r);
+    }
+    return repos;
+  });
 
-  const ctx = { repos, days, home, now: Date.now(), onProgress };
+  const ctx = { repos, days, home, now: Date.now(), onProgress, cache: new Map<string, unknown>() };
   const items: Item[] = [];
   const kept: { path: string; why: string }[] = [];
   for (const cleanup of CLEANUPS) {
-    const out = cleanup.collect(ctx);
+    // first cat key names the phase in prof lines, so the report reads
+    // collect worktree-merged instead of collect 3
+    const out = timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
     items.push(...out.items);
     if (out.kept) kept.push(...out.kept);
   }
 
   const paths = [...new Set(items.flatMap(targets))].filter((p) => existsSync(p));
-  const sizes = diskUsage(paths, onProgress);
+  count("measured-paths", paths.length);
+  const sizes = timed("measure diskUsage", () => diskUsage(paths, onProgress));
   for (const i of items) i.size = targets(i).reduce((s, p) => s + (sizes.get(p) ?? 0), 0);
 
   // only items with a positive measured target contribute to the reclaimable result. this
@@ -59,5 +70,6 @@ export function scan(
   // picker and out of yes.
   const final = dedupe(items).filter((i) => i.size > 0);
   final.sort((a, b) => b.size - a.size);
+  reportCounts();
   return { items: final, kept, repos: repos.size };
 }

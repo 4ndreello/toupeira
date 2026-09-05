@@ -1,6 +1,6 @@
 import { DAY, short } from "../format.js";
 import { git } from "../sh.js";
-import { defaultBranch, isContentMerged, mergedBranches, parseWorktrees } from "../repo.js";
+import { cachedDefaultBranch, cachedMerged, cachedRemotes, cachedWorktrees, isContentMerged, parseWorktrees } from "../repo.js";
 import type { Ctx, CollectResult } from "../../types.js";
 
 export const cats: Record<string, string> = {
@@ -11,8 +11,7 @@ export const cats: Record<string, string> = {
 // can never equal a local branch name, strip the remote so the default branch itself is
 // excluded below. only the first segment goes, and only when a remote of that name exists:
 // feature x is a perfectly ordinary branch name.
-function localName(repo: string, base: string): string {
-  const remotes = (git(["remote"], repo) || "").split("\n").filter(Boolean);
+function localName(remotes: string[], base: string): string {
   const hit = remotes.find((r) => base.startsWith(`${r}/`));
   return hit ? base.slice(hit.length + 1) : base;
 }
@@ -20,42 +19,42 @@ function localName(repo: string, base: string): string {
 // the graveyard: a branch whose patch is already upstream (squash included) and whose
 // remote side is gone has nothing left to protect. checked out, unmerged, young or
 // still published branches never reach here.
-export function collect({ repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" }: Partial<Ctx>): CollectResult {
+export function collect(ctx: Partial<Ctx>): CollectResult {
+  const { repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" } = ctx;
   const items: CollectResult["items"] = [];
   let n = 0;
 
   for (const repo of repos) {
     onProgress(`branches ${++n}/${repos.size} ${short(repo)}`);
-    const base = defaultBranch(repo);
+    const base = cachedDefaultBranch(ctx, repo);
     if (!base) continue;
-    const localBase = localName(repo, base);
-    const current = git(["symbolic-ref", "--short", "HEAD"], repo);
+    const localBase = localName(cachedRemotes(ctx, repo), base);
     // a branch checked out in any worktree cannot go: deleting it breaks that worktree
-    const busy = new Set(parseWorktrees(git(["worktree", "list", "--porcelain"], repo) || "").map((w) => w.branch));
-    const list = git(["for-each-ref", "refs/heads", "--format=%(refname:short)%09%(committerdate:unix)"], repo);
+    const busy = new Set(parseWorktrees(cachedWorktrees(ctx, repo)).map((w) => w.branch));
+    const list = git(["for-each-ref", "refs/heads", "--format=%(refname:short)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track)%09%(upstream:remoteref)"], repo);
     if (!list) continue;
     // read once per repo, not once per branch: isContentMerged would fork a full
     // history walk for every candidate otherwise
-    const merged = mergedBranches(repo, base);
+    const merged = cachedMerged(ctx, repo, base);
 
     for (const line of list.split("\n")) {
-      const tab = line.indexOf("\t");
-      if (tab === -1) continue;
-      const branch = line.slice(0, tab);
-      const ts = Number(line.slice(tab + 1)) * 1000;
-      if (!branch || !ts || branch === base || branch === localBase || branch === current || busy.has(branch)) continue;
+      // exactly five tab fields, split whole: branch names hold slashes but never
+      // tabs, and the upstream short stays whole for the same reason
+      const f = line.split("\t");
+      if (f.length !== 5) continue;
+      const [branch, rawTs, upstream, track, remoteref] = f;
+      const ts = Number(rawTs) * 1000;
+      if (!branch || !ts || branch === base || branch === localBase || busy.has(branch)) continue;
       const age = Math.floor((now - ts) / DAY);
       if (age < days) continue;
 
-      // at upstream dies when the tracking ref is gone, so read the config instead:
-      // it remembers an upstream that was deleted on the remote, which is exactly the
-      // evidence this cleanup needs. no config at all is no evidence, a branch that
-      // was never published may hold the only copy of its commits, so it stays.
-      const remote = git(["config", "--get", `branch.${branch}.remote`], repo);
-      const merge = git(["config", "--get", `branch.${branch}.merge`], repo);
-      if (!remote || !merge || !merge.startsWith("refs/heads/")) continue;
-      const name = merge.slice("refs/heads/".length);
-      if (git(["rev-parse", "--verify", "--quiet", `refs/remotes/${remote}/${name}`], repo)) continue;
+      // the tracking config is the evidence, read in the same fork as the listing:
+      // no upstream at all means the branch may hold the only copy of its commits,
+      // so it stays. only [gone] proves the remote side vanished: synced is empty
+      // and ahead/behind keep their markers, so match exactly, never truthiness.
+      // a local upstream (remote .) always resolves, so it skips here, where the
+      // old rev-parse of refs/remotes/./name failed open and offered it.
+      if (!upstream || !remoteref?.startsWith("refs/heads/") || track !== "[gone]") continue;
       if (!isContentMerged(repo, branch, base, merged)) continue;
 
       items.push({
@@ -69,7 +68,7 @@ export function collect({ repos = new Set<string>(), days = 7, now = Date.now(),
         label: `${repo}#${branch}`,
         size: 0,
         safe: true,
-        note: `${branch} (${age}d), merged into ${base}, ${remote}/${name} deleted`,
+        note: `${branch} (${age}d), merged into ${base}, ${upstream} deleted`,
         action: { kind: "branch-delete", repo, branch },
       });
     }

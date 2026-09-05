@@ -24,7 +24,8 @@ const HELP = `toupeira - clean up what coding agents leave behind
 
   --days <n>   minimum idle age for a worktree, a chat or a cache entry (default 7)
   --root <p>   extra repository, for agents that leave no session log
-  --yes        remove everything marked safe, no prompt`;
+  --yes        remove everything marked safe, no prompt
+  --profile    stderr timing per phase (TOUPEIRA_PROFILE=verbose logs every git call)`;
 
 async function main(): Promise<void> {
   const argv: string[] = process.argv.slice(2);
