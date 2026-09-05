@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { git } from "./sh.js";
+import type { Ctx } from "../types.js";
 
 export interface Worktree {
   path: string;
@@ -50,6 +51,27 @@ export function defaultBranch(repo: string): string | null {
   }
   return null;
 }
+
+// per-scan memo for the per-repo reads every cleanup repeats, never module-global:
+// parallel scans and tests must not share state. a missing cache (partial ctx in
+// tests) still works, it just shares nothing.
+function memo<T>(ctx: Partial<Ctx>, key: string, fn: () => T): T {
+  const cache = (ctx.cache ??= new Map<string, unknown>());
+  if (!cache.has(key)) cache.set(key, fn());
+  return cache.get(key) as T;
+}
+
+export const cachedDefaultBranch = (ctx: Partial<Ctx>, repo: string): string | null =>
+  memo(ctx, `base ${repo}`, () => defaultBranch(repo));
+
+export const cachedMerged = (ctx: Partial<Ctx>, repo: string, base: string | null): Set<string> =>
+  memo(ctx, `merged ${repo} ${base}`, () => mergedBranches(repo, base));
+
+export const cachedWorktrees = (ctx: Partial<Ctx>, repo: string): string =>
+  memo(ctx, `worktrees ${repo}`, () => git(["worktree", "list", "--porcelain"], repo) || "");
+
+export const cachedRemotes = (ctx: Partial<Ctx>, repo: string): string[] =>
+  memo(ctx, `remotes ${repo}`, () => (git(["remote"], repo) || "").split("\n").filter(Boolean));
 
 // git branch merged is per repo work, so a caller looping over every branch
 // reads it once and passes the set in, otherwise it forks a full history walk per branch

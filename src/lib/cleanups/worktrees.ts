@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DAY, short } from "../format.js";
 import { git } from "../sh.js";
-import { defaultBranch, isContentMerged, mergedBranches, parseWorktrees, unpushed } from "../repo.js";
+import { cachedDefaultBranch, cachedMerged, cachedWorktrees, isContentMerged, parseWorktrees, unpushed } from "../repo.js";
 import type { Ctx, CollectResult } from "../../types.js";
 
 export const cats: Record<string, string> = {
@@ -14,19 +14,20 @@ export const cats: Record<string, string> = {
 
 // node_modules rides along in here instead of its own cleanup: it needs the same
 // git status and log and merge base work per worktree, and splitting would run it twice.
-export function collect({ repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" }: Partial<Ctx>): CollectResult {
+export function collect(ctx: Partial<Ctx>): CollectResult {
+  const { repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" } = ctx;
   const items: CollectResult["items"] = [];
   const kept: { path: string; why: string }[] = [];
   let n = 0;
 
   for (const repo of repos) {
     onProgress(`worktrees ${++n}/${repos.size} ${short(repo)}`);
-    const list = git(["worktree", "list", "--porcelain"], repo);
+    const list = cachedWorktrees(ctx, repo);
     if (!list) continue;
-    const base = defaultBranch(repo);
+    const base = cachedDefaultBranch(ctx, repo);
     // read once per repo, not once per worktree: isContentMerged would fork a full
     // history walk for every candidate otherwise
-    const mergedSet = mergedBranches(repo, base);
+    const mergedSet = cachedMerged(ctx, repo, base);
 
     for (const w of parseWorktrees(list)) {
       if (w.path === repo || w.bare) continue;

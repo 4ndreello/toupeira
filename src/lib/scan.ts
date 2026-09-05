@@ -37,12 +37,15 @@ export function scan(
 ): ScanResult {
   onProgress("reading agent sessions");
   const repos = new Set<string>();
+  // many agent cwds fold into the same repository, so resolve each input once
+  const resolved = new Map<string, string | null>();
   for (const p of [...harnessCwds(home), ...roots]) {
-    const r = mainRepoOf(p);
+    if (!resolved.has(p)) resolved.set(p, mainRepoOf(p));
+    const r = resolved.get(p);
     if (r) repos.add(r);
   }
 
-  const ctx = { repos, days, home, now: Date.now(), onProgress };
+  const ctx = { repos, days, home, now: Date.now(), onProgress, cache: new Map<string, unknown>() };
   const items: Item[] = [];
   const kept: { path: string; why: string }[] = [];
   for (const cleanup of CLEANUPS) {
