@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm test                              # build, then node --test over dist
-node --test dist/test/toupeira.test.js # same suite, explicit, after npm run build
-node --test --test-name-pattern human dist/test/toupeira.test.js # one test, by name
+node --test dist/test/*.test.js       # same suite, explicit, after npm run build
+node --test --test-name-pattern human dist/test/*.test.js # one test, by name
 node dist/index.js                    # scan (read-only) against the real HOME
 node dist/index.js clean --days 30    # the picker
 npm pack                              # what CI also checks: the tarball must run
@@ -49,7 +49,7 @@ zero. Hence the split: smells there, coverage here.
 Two consequences worth knowing before reading a Sonar verdict:
 
 - It never reads a config file from this repo, so it does not know
-  `src/test/toupeira.test.ts` is a test and will file hotspots against its
+  the files under `src/test/` are tests and will file hotspots against their
   `mkdtempSync` fixtures.
 - `S4036` (a tool resolved through `PATH`) and `S6959` (`reduce` with no initial
   value) both fire here and are both wrong: resolving `git`, `du` and `docker`
@@ -180,11 +180,14 @@ gh release create "v$(node -p "require('./package.json').version")" --generate-n
 
 ## Testing style
 
-`src/test/toupeira.test.ts` is one flat file of `node:test` cases, no framework, no fixtures. Tests
+`src/test/` is one file per domain — `sessions`, `branches`, `worktrees`, `scan` and so on,
+plus `helpers.ts` for the shared test builders — all `node:test` cases, no framework, no
+fixture framework.
+Each file is a separate node process, so the suite runs in parallel. Tests
 that need agent state build a fake `HOME` under `mkdtempSync` and pass it in — every
 `home`-taking function exists so this stays possible. Git behavior is tested by
-`execFileSync`-ing real `git` into a temp repo. Keep new tests in the same file and
-the same style.
+`execFileSync`-ing real `git` into a temp repo. Keep new tests in the file of their
+domain and the same style.
 
 ## Conventions
 
