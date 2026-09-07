@@ -23,7 +23,7 @@ test('parseWorktrees keeps paths with spaces and flags prunable', () => {
   assert.equal(wt[0]!.prunable, false)
 })
 
-test('t3 code feeds its parked worktrees into the regular worktree cleanup', () => {
+test('t3 code feeds its parked worktrees into the regular worktree cleanup', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const repoDir = mkdtempSync(join(tmpdir(), 'toupeira-t3repo-'))
   try {
@@ -44,7 +44,7 @@ test('t3 code feeds its parked worktrees into the regular worktree cleanup', () 
     assert.equal(realpathSync(mainRepoOf(wt)!), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
 
     const repos = new Set<string>([...harnessCwds(home)].map((p) => mainRepoOf(p)).filter((v): v is string => Boolean(v)))
-    const { items } = worktrees.collect({ repos, days: 7, now: Date.now(), onProgress() {} })
+    const { items } = await worktrees.collect({ repos, days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => [i.cat, i.path]), [['worktree-merged', wt]], 'a clean merged t3 workspace is offered for removal')
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -75,7 +75,7 @@ function worktreeYard() {
   return { dir, g, commit }
 }
 
-test('the worktree cleanup offers the provably safe and holds the rest with reasons', () => {
+test('the worktree cleanup offers the provably safe and holds the rest with reasons', async () => {
   const { dir, g, commit } = worktreeYard()
   try {
     // merged and idle: offered whatever its age
@@ -120,7 +120,7 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     g('worktree', 'add', join(dir, 'wt-gone'), '-b', 'gonebr')
     rmSync(join(dir, 'wt-gone'), { recursive: true, force: true })
 
-    const { items, kept } = worktrees.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const { items, kept } = await worktrees.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const byCat = (cat: string): typeof items => items.filter((i) => i.cat === cat)
 
     assert.deepEqual(byCat('worktree-prunable').map((i) => i.path), [join(dir, 'wt-gone')])

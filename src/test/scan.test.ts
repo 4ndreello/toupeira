@@ -22,7 +22,7 @@ test('an item inside a tree-removing item is dropped, but not under a prune', ()
   )
 })
 
-test('du measures directories on bsd as well as gnu', () => {
+test('du measures directories on bsd as well as gnu', async () => {
   // `du -sb` is gnu-only: on macos it exits with "illegal option" and every directory,
   // plus the whole headline, silently measured 0 B
   const home = mkdtempSync(join(tmpdir(), 'toupeira-du-'))
@@ -30,14 +30,14 @@ test('du measures directories on bsd as well as gnu', () => {
     const dir = join(home, 'cache')
     mkdirSync(dir)
     writeFileSync(join(dir, 'blob'), 'x'.repeat(200_000))
-    assert.ok((diskUsage([dir]).get(dir) ?? 0) >= 200_000, 'a directory measures its contents')
+    assert.ok(((await diskUsage([dir])).get(dir) ?? 0) >= 200_000, 'a directory measures its contents')
     assert.ok(combinedSize([dir]) >= 200_000, 'the deduped headline is not zero')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
 })
 
-test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => {
+test('scan runs the whole pipeline over one repo: measure, dedupe, sort', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-scan-'))
   try {
@@ -51,7 +51,7 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => 
     mkdirSync(join(dir, 'wt/node_modules'), { recursive: true })
     writeFileSync(join(dir, 'wt/node_modules/blob'), 'x'.repeat(200_000))
 
-    const { items, kept, repos } = scan({ days: 7, roots: [dir], home })
+    const { items, kept, repos } = await scan({ days: 7, roots: [dir], home })
     assert.equal(repos, 1, 'the recorded root folds into one repository')
     assert.deepEqual(kept, [])
     assert.deepEqual(
@@ -66,7 +66,7 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', () => 
   }
 })
 
-test('scan hides candidates with no measurable bytes', () => {
+test('scan hides candidates with no measurable bytes', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
     // package-store maintenance has no measurable target, while the old cache file
@@ -75,7 +75,7 @@ test('scan hides candidates with no measurable bytes', () => {
     const old = Date.now() - 30 * 86400e3
     writeAt(home, '.claude/paste-cache/old.txt', 'x', old)
 
-    const { items } = scan({ home })
+    const { items } = await scan({ home })
     assert.equal(items.length, 1)
     assert.equal(items[0]!.cat, 'agent-cache')
     assert.equal(items[0]!.size, 1)
@@ -85,7 +85,7 @@ test('scan hides candidates with no measurable bytes', () => {
 })
 
 // duplicate roots resolve once: discovery memos mainRepoOf by input path
-test('scan resolves duplicate roots once', () => {
+test('scan resolves duplicate roots once', async () => {
   const realEnv = process.env['TOUPEIRA_PROFILE']
   const realWrite = process.stderr.write
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
@@ -96,7 +96,7 @@ test('scan resolves duplicate roots once', () => {
     initRepo(dir)
     process.env['TOUPEIRA_PROFILE'] = 'verbose'
     resetCounts()
-    const { repos } = scan({ roots: [dir, dir], home })
+    const { repos } = await scan({ roots: [dir, dir], home })
     assert.equal(repos, 1)
     assert.equal(
       out.split('\n').filter((l) => l === 'prof git rev-parse --path-format=absolute --git-common-dir').length,
@@ -108,6 +108,34 @@ test('scan resolves duplicate roots once', () => {
     if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
     else process.env['TOUPEIRA_PROFILE'] = realEnv
     resetCounts()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// the loading spinner only moves when the event loop turns: a fully synchronous scan
+// would starve its interval, so the pipeline yields between blocking forks
+test('scan yields to the event loop between blocking calls', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-yield-'))
+  // scheduled before the scan: it can only have run if the loop turned mid-scan,
+  // since the assertion below runs as a microtask the moment scan resolves
+  let loopTurned = false
+  setImmediate(() => {
+    loopTurned = true
+  })
+  try {
+    const g = initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'one\n')
+    g('add', '.')
+    g('commit', '-qm', 'init')
+    g('branch', 'done')
+    g('worktree', 'add', join(dir, 'wt'), 'done')
+    mkdirSync(join(dir, 'wt/node_modules'), { recursive: true })
+    writeFileSync(join(dir, 'wt/node_modules/blob'), 'x'.repeat(200_000))
+    await scan({ days: 7, roots: [dir], home })
+    assert.equal(loopTurned, true, 'the event loop never turned during the whole scan')
+  } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })
   }

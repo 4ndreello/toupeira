@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 
   // doctor only measures: it runs before the scan path so no spinner, no items, no actions
   if (cmd === "doctor") {
-    const { rows, docker } = report({ home: HOME });
+    const { rows, docker } = await report({ home: HOME });
     console.log("doctor - measured, not touched:");
     const w = Math.max(0, ...rows.map((r) => human(r.size).length));
     for (const r of rows) console.log(`  ${human(r.size).padStart(w)}  ${r.name}  ${C.dim(short(r.path))}`);
@@ -57,8 +57,8 @@ async function main(): Promise<void> {
   const roots: string[] = argv.reduce<string[]>((acc, a, i) => (a === "--root" ? [...acc, argv[i + 1] as string] : acc), []);
   const onProgress = loadingScreen();
   const t0 = performance.now();
-  const { items, kept, repos } = scan({ days: Number(flag("days", "7")), roots, onProgress });
-  if (process.stdout.isTTY) process.stdout.write("\x1b[2K");
+  const { items, kept, repos } = await scan({ days: Number(flag("days", "7")), roots, onProgress });
+  onProgress.stop();
 
   if (!items.length) {
     console.log(`${repos} repo(s) discovered, nothing to clean.`);

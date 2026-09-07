@@ -1,4 +1,5 @@
 import { DAY, short } from "../format.js";
+import { breathe } from "../profile.js";
 import { git } from "../sh.js";
 import { cachedDefaultBranch, cachedMerged, cachedRemotes, cachedWorktrees, isContentMerged, parseWorktrees } from "../repo.js";
 import type { Ctx, CollectResult } from "../../types.js";
@@ -19,7 +20,7 @@ function localName(remotes: string[], base: string): string {
 // the graveyard: a branch whose patch is already upstream (squash included) and whose
 // remote side is gone has nothing left to protect. checked out, unmerged, young or
 // still published branches never reach here.
-export function collect(ctx: Partial<Ctx>): CollectResult {
+export async function collect(ctx: Partial<Ctx>): Promise<CollectResult> {
   const { repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" } = ctx;
   const items: CollectResult["items"] = [];
   let n = 0;
@@ -55,6 +56,9 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
       // a local upstream (remote .) always resolves, so it skips here, where the
       // old rev-parse of refs/remotes/./name failed open and offered it.
       if (!upstream || !remoteref?.startsWith("refs/heads/") || track !== "[gone]") continue;
+      // same reason as worktrees: the squash check below forks per branch with no repo tick
+      onProgress(`branches ${n}/${repos.size} ${short(repo)} ${branch}`);
+      await breathe();
       if (!isContentMerged(repo, branch, base, merged)) continue;
 
       items.push({

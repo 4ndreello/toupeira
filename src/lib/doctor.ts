@@ -39,10 +39,10 @@ export interface DoctorRow {
 }
 
 // ponytail: this spot list is static, the upgrade path is discovering more from each tool own config
-export function report({ home, runDocker = realDocker }: { home: string; runDocker?: () => string | null }): { rows: DoctorRow[]; docker: string | null } {
+export async function report({ home, runDocker = realDocker }: { home: string; runDocker?: () => string | null }): Promise<{ rows: DoctorRow[]; docker: string | null }> {
   const spots = process.platform === "darwin" ? [...SPOTS, ...DARWIN_SPOTS] : SPOTS;
   const live = spots.map((s) => ({ name: s.name, path: join(home, s.dir) })).filter((s) => existsSync(s.path));
-  const sizes = diskUsage(live.map((s) => s.path));
+  const sizes = await diskUsage(live.map((s) => s.path));
   const rows = live.map((s) => ({ ...s, size: sizes.get(s.path) ?? 0 })).sort((a, b) => b.size - a.size);
   let docker: string | null = null;
   try {

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DAY, short } from "../format.js";
+import { breathe } from "../profile.js";
 import { git } from "../sh.js";
 import { cachedDefaultBranch, cachedMerged, cachedWorktrees, isContentMerged, parseWorktrees, unpushed } from "../repo.js";
 import type { Ctx, CollectResult } from "../../types.js";
@@ -14,7 +15,7 @@ export const cats: Record<string, string> = {
 
 // node_modules rides along in here instead of its own cleanup: it needs the same
 // git status and log and merge base work per worktree, and splitting would run it twice.
-export function collect(ctx: Partial<Ctx>): CollectResult {
+export async function collect(ctx: Partial<Ctx>): Promise<CollectResult> {
   const { repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {}, home = "" } = ctx;
   const items: CollectResult["items"] = [];
   const kept: { path: string; why: string }[] = [];
@@ -31,7 +32,12 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
     // history walk for every candidate otherwise
     const mergedSet = cachedMerged(ctx, repo, base);
 
+    let seen = 0;
     for (const w of candidates) {
+      // per worktree, not per repo: one repo can hold a dozen checkouts and each one
+      // forks several git calls, so the repo line alone would sit still for seconds
+      onProgress(`worktrees ${n}/${repos.size} ${short(repo)} ${++seen}/${candidates.length}`);
+      await breathe();
       if (w.prunable || !existsSync(w.path)) {
         items.push({ cat: "worktree-prunable", repo, path: w.path, size: 0, safe: true, note: "registered here, but the directory is gone", action: { kind: "prune", repo } });
         continue;
