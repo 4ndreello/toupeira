@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { count, verboseProfile } from "./profile.js";
+import { breathe, count, verboseProfile } from "./profile.js";
 
 export function git(args: string[], cwd: string): string | null {
   // counted always, printed per call only at verbose: a squash-merge check forks
@@ -31,11 +31,13 @@ const KB = 1024;
 // one du per path, on purpose: a single batched call counts a hardlinked file only for
 // whichever path reaches it first, so pnpm and bun worktrees report near zero at random.
 // ponytail: block granularity, a directory of tiny files rounds up per file, per platform
-export function diskUsage(paths: string[], onProgress: (msg: string) => void = () => {}): Map<string, number> {
+export async function diskUsage(paths: string[], onProgress: (msg: string) => void = () => {}): Promise<Map<string, number>> {
   const sizes = new Map<string, number>();
   let n = 0;
   for (const p of paths) {
     onProgress(`measuring ${++n}/${paths.length}`);
+    // one loop turn between paths: du forks block, so the spinner only moves here
+    await breathe();
     // a single file is one stat, not one fork: transcripts arrive by the thousand
     const st = statSync(p, { throwIfNoEntry: false });
     if (st?.isFile()) {

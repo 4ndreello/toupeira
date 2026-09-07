@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { report } from '../lib/doctor.js'
 
-test('doctor measures the well-known spots that exist, biggest first', () => {
+test('doctor measures the well-known spots that exist, biggest first', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-doctor-'))
   try {
     mkdirSync(join(home, '.gradle/caches'), { recursive: true })
@@ -13,7 +13,7 @@ test('doctor measures the well-known spots that exist, biggest first', () => {
     mkdirSync(join(home, '.cache/pip'), { recursive: true })
     writeFileSync(join(home, '.cache/pip/wheel'), 'x'.repeat(1000))
 
-    const { rows } = report({ home, runDocker: () => null })
+    const { rows } = (await report({ home, runDocker: () => null }))
     assert.deepEqual(rows.map((r) => r.name), ['gradle caches', 'pip cache'], 'missing spots contribute nothing')
     assert.deepEqual(rows.map((r) => r.path), [join(home, '.gradle/caches'), join(home, '.cache/pip')])
     assert.ok(rows[0]!.size >= 300_000)
@@ -24,22 +24,22 @@ test('doctor measures the well-known spots that exist, biggest first', () => {
   }
 })
 
-test('an empty HOME yields no doctor rows and no docker, without throwing', () => {
+test('an empty HOME yields no doctor rows and no docker, without throwing', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
-    assert.deepEqual(report({ home, runDocker: () => null }), { rows: [], docker: null })
+    assert.deepEqual((await report({ home, runDocker: () => null })), { rows: [], docker: null })
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
 })
 
-test('docker output passes through verbatim, and a failing probe reports null instead of throwing', () => {
+test('docker output passes through verbatim, and a failing probe reports null instead of throwing', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
     const canned = 'Type            Images\nImages          5'
-    assert.equal(report({ home, runDocker: () => canned }).docker, canned)
+    assert.equal((await report({ home, runDocker: () => canned })).docker, canned)
     assert.equal(
-      report({ home, runDocker: () => { throw new Error('no docker') } }).docker,
+      (await report({ home, runDocker: () => { throw new Error('no docker') } })).docker,
       null
     )
   } finally {

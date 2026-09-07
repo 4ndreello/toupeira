@@ -32,9 +32,9 @@ export interface ScanResult {
   repos: number;
 }
 
-export function scan(
+export async function scan(
   { days = 7, roots = [], home = HOME, onProgress = () => {} }: { days?: number; roots?: string[]; home?: string; onProgress?: (msg: string) => void } = {},
-): ScanResult {
+): Promise<ScanResult> {
   resetCounts();
   const repos = timed("discovery", () => {
     onProgress("reading agent sessions");
@@ -55,14 +55,14 @@ export function scan(
   for (const cleanup of CLEANUPS) {
     // first cat key names the phase in prof lines, so the report reads
     // collect worktree-merged instead of collect 3
-    const out = timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
+    const out = await timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
     items.push(...out.items);
     if (out.kept) kept.push(...out.kept);
   }
 
   const paths = [...new Set(items.flatMap(targets))].filter((p) => existsSync(p));
   count("measured-paths", paths.length);
-  const sizes = timed("measure diskUsage", () => diskUsage(paths, onProgress));
+  const sizes = await timed("measure diskUsage", () => diskUsage(paths, onProgress));
   for (const i of items) i.size = targets(i).reduce((s, p) => s + (sizes.get(p) ?? 0), 0);
 
   // only items with a positive measured target contribute to the reclaimable result. this

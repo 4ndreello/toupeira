@@ -13,12 +13,12 @@ test('every category a cleanup produces has a label, and none collide', () => {
 
 // one HOME with none of anyone's state: every cleanup must answer with nothing, and none
 // may throw on the directories it goes looking for
-test('an empty HOME yields nothing from every cleanup, and throws nothing', () => {
+test('an empty HOME yields nothing from every cleanup, and throws nothing', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
     const ctx = { repos: new Set<string>(), days: 7, home, now: Date.now(), onProgress() {} }
     for (const c of CLEANUPS) {
-      assert.deepEqual(c.collect(ctx).items, [], `${Object.keys(c.cats).join('/')} offered something in an empty HOME`)
+      assert.deepEqual((await c.collect(ctx)).items, [], `${Object.keys(c.cats).join('/')} offered something in an empty HOME`)
     }
   } finally {
     rmSync(home, { recursive: true, force: true })

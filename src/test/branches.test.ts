@@ -27,7 +27,7 @@ function graveyardRepo() {
   return { dir, g, commit }
 }
 
-test('the graveyard offers merged branches whose remote side is gone, and only those', () => {
+test('the graveyard offers merged branches whose remote side is gone, and only those', async () => {
   const { dir, g, commit } = graveyardRepo()
   try {
     // squash-merged, pushed, then deleted on the remote
@@ -56,7 +56,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
     g('branch', 'old-wt', 'gone')
     g('worktree', 'add', join(dir, 'wt'), 'old-wt')
 
-    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
     assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
     assert.equal(by.get('gone')!.safe, true, 'a deleted upstream is proven gone')
@@ -80,7 +80,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 // the upstream reading comes from the same for-each-ref fork as the listing:
 // gone (even slashed or never-fetched) surfaces, synced, local and tag
 // upstreams stay. a local upstream used to fail open via refs/remotes/./name.
-test('the graveyard reads gone state from the listing, three forks lighter', () => {
+test('the graveyard reads gone state from the listing, three forks lighter', async () => {
   const { dir, g, commit } = graveyardRepo()
   try {
     g('init', '--bare', '-q', join(dir, 'remote.git'))
@@ -115,7 +115,7 @@ test('the graveyard reads gone state from the listing, three forks lighter', () 
 
     g('checkout', '-q', 'main')
 
-    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
     assert.deepEqual(sorted(by.keys()), ['feat/vanished', 'ghost'], 'only gone remote sides surface')
     assert.match(by.get('feat/vanished')!.note, /origin\/feat\/vanished deleted/, 'the note names the whole upstream short')
@@ -127,7 +127,7 @@ test('the graveyard reads gone state from the listing, three forks lighter', () 
 // defaultBranch answers `origin/main`, which never equals a local branch name , without
 // stripping the remote the default branch itself becomes a candidate. a fork whose local
 // main tracks a second remote that dropped it is exactly the case that reaches here.
-test('the default branch is never offered, whatever its tracking config says', () => {
+test('the default branch is never offered, whatever its tracking config says', async () => {
   const { dir, g } = graveyardRepo()
   try {
     g('init', '--bare', '-q', join(dir, 'remote.git'))
@@ -140,7 +140,7 @@ test('the default branch is never offered, whatever its tracking config says', (
     g('checkout', '-qb', 'work')
 
     assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main', 'setup: the base is remote-qualified')
-    const { items } = branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => actionBranch(i)), [], 'main is the default branch, not a graveyard candidate')
   } finally {
     rmSync(dir, { recursive: true, force: true })

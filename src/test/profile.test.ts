@@ -38,7 +38,7 @@ test('profile: timed and counts stay silent unless TOUPEIRA_PROFILE is set', () 
   }
 })
 
-test('profile: scan emits per-phase lines and a count block when enabled', () => {
+test('profile: scan emits per-phase lines and a count block when enabled', async () => {
   const realEnv = process.env['TOUPEIRA_PROFILE']
   const realWrite = process.stderr.write
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
@@ -47,7 +47,7 @@ test('profile: scan emits per-phase lines and a count block when enabled', () =>
   try {
     process.env['TOUPEIRA_PROFILE'] = '1'
     resetCounts()
-    scan({ home })
+    await scan({ home })
     assert.match(out, /prof discovery /, 'discovery phase is timed')
     assert.match(out, /prof collect /, 'every cleanup collect is timed')
     assert.match(out, /prof measure diskUsage/, 'the du/stat phase is timed')
@@ -62,7 +62,7 @@ test('profile: scan emits per-phase lines and a count block when enabled', () =>
 })
 
 // a ctx cache shares per-repo reads between runs: the second collect forks less
-test('a shared ctx cache serves per-repo reads from memory', () => {
+test('a shared ctx cache serves per-repo reads from memory', async () => {
   const realEnv = process.env['TOUPEIRA_PROFILE']
   const realWrite = process.stderr.write
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-cache-'))
@@ -76,9 +76,9 @@ test('a shared ctx cache serves per-repo reads from memory', () => {
     process.env['TOUPEIRA_PROFILE'] = 'verbose'
     resetCounts()
     const ctx = { repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {}, cache: new Map<string, unknown>() }
-    const first = branches.collect(ctx)
+    const first = await branches.collect(ctx)
     out = ''
-    const second = branches.collect(ctx)
+    const second = await branches.collect(ctx)
     assert.deepEqual(second, first, 'cached reads answer the same')
     assert.ok(!out.includes('prof git symbolic-ref --short refs/remotes/origin/HEAD'), 'the base came from cache')
     assert.ok(out.includes('prof git for-each-ref'), 'uncached reads still fork')
