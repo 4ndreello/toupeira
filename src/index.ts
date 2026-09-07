@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   const onProgress = loadingScreen();
   const t0 = performance.now();
   const { items, kept, repos } = scan({ days: Number(flag("days", "7")), roots, onProgress });
-  if (process.stdout.isTTY) process.stdout.write("\x1b[2K");
+  onProgress.stop();
 
   if (!items.length) {
     console.log(`${repos} repo(s) discovered, nothing to clean.`);

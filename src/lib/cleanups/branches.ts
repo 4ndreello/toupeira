@@ -55,6 +55,8 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
       // a local upstream (remote .) always resolves, so it skips here, where the
       // old rev-parse of refs/remotes/./name failed open and offered it.
       if (!upstream || !remoteref?.startsWith("refs/heads/") || track !== "[gone]") continue;
+      // same reason as worktrees: the squash check below forks per branch with no repo tick
+      onProgress(`branches ${n}/${repos.size} ${short(repo)} ${branch}`);
       if (!isContentMerged(repo, branch, base, merged)) continue;
 
       items.push({

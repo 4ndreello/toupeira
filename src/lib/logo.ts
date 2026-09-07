@@ -27,17 +27,37 @@ function pkgVersion(): string {
   }
 }
 
-// the logo stays up while the scan runs, with the progress line reading as underground
-export function loadingScreen(out: NodeJS.WriteStream = process.stdout): (msg: string) => void {
-  if (!out.isTTY) return () => {};
+// the logo stays up while the scan runs, with the progress line reading as underground.
+// the spinner runs on its own timer, not on progress calls: one repo can spend seconds
+// inside git without a new message, and a frame that never moves reads as a hang.
+// onProgress only swaps the message, the interval keeps the frame alive.
+export function loadingScreen(
+  out: NodeJS.WriteStream = process.stdout,
+  ms = 80,
+): ((msg: string) => void) & { stop: () => void } {
+  const idle = Object.assign(() => {}, { stop: () => {} });
+  if (!out.isTTY) return idle;
   const spin: string[] = utf8() ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] : ["-", "\\", "|", "/"];
   const cols = (out as NodeJS.WriteStream & { columns?: number }).columns;
   out.write(`\n${banner(cols).join("\n")}\n\n`);
+  let last = "";
   let tick = 0;
-  return (msg: string) => {
+  const render = (): void => {
     const frame: string = spin[tick++ % spin.length] ?? "-";
-    out.write(`\x1b[2K   ${frame} ${msg}\r`);
+    out.write(`\x1b[2K   ${frame} ${last}\r`);
   };
+  const timer = setInterval(render, ms);
+  // the scan blocks on git and du, so a forgotten stop must never hold the process open
+  if (typeof timer.unref === "function") timer.unref();
+  const onProgress = (msg: string): void => {
+    last = msg;
+    render();
+  };
+  const stop = (): void => {
+    clearInterval(timer);
+    out.write("\x1b[2K\r");
+  };
+  return Object.assign(onProgress, { stop });
 }
 
 export function banner(cols?: number): string[] {

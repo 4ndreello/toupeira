@@ -31,7 +31,11 @@ export function collect(ctx: Partial<Ctx>): CollectResult {
     // history walk for every candidate otherwise
     const mergedSet = cachedMerged(ctx, repo, base);
 
+    let seen = 0;
     for (const w of candidates) {
+      // per worktree, not per repo: one repo can hold a dozen checkouts and each one
+      // forks several git calls, so the repo line alone would sit still for seconds
+      onProgress(`worktrees ${n}/${repos.size} ${short(repo)} ${++seen}/${candidates.length}`);
       if (w.prunable || !existsSync(w.path)) {
         items.push({ cat: "worktree-prunable", repo, path: w.path, size: 0, safe: true, note: "registered here, but the directory is gone", action: { kind: "prune", repo } });
         continue;
