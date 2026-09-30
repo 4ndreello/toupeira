@@ -35,7 +35,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "coverage": "npm run build && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-lines=79 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info dist/test/*.test.js",
+    "coverage": "npm run build && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-lines=88 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info dist/test/*.test.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
   },

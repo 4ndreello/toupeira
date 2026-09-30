@@ -22,7 +22,7 @@ the bin — so `files` in `package.json` must keep listing `dist`.
 ## Quality gate
 
 Coverage is enforced by node itself, in the `coverage` job:
-`--test-coverage-lines=79`. That number is a **ratchet** — the pull request that
+`--test-coverage-lines=88`. That number is a **ratchet** — the pull request that
 raises coverage is the one that raises the floor, and it never comes back down
 to make a pull request pass. It has its own job because the
 flag does not exist on node 20, which the matrix still has to cover.
