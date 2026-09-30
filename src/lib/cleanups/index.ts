@@ -10,8 +10,8 @@ import type { Ctx, CollectResult } from "../../types.js";
 
 // Adding a cleanup: one file exporting cats and collect(ctx), one line here.
 // ctx = { repos, days, home, now, onProgress }; collect returns { items, kept? }.
-// collect may be async: cleanups with long blocking loops await breathe() between
-// forks so the loading spinner interval can fire, and scan() awaits every collect.
+// collect may be async for subprocess reads; scan() runs cleanups concurrently and
+// flattens their results in registry order.
 export interface Cleanup {
   cats: Record<string, string>;
   collect: (ctx: Partial<Ctx>) => CollectResult | Promise<CollectResult>;

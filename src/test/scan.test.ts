@@ -66,6 +66,30 @@ test('scan runs the whole pipeline over one repo: measure, dedupe, sort', async 
   }
 })
 
+test('scan concatenates concurrently collected cleanups in registry order', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-order-home-'))
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-order-scan-'))
+  try {
+    const g = initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'one\n')
+    g('add', '.')
+    g('commit', '-qm', 'init')
+    g('branch', 'done')
+    const worktree = join(dir, 'wt')
+    g('worktree', 'add', worktree, 'done')
+    const size = (await diskUsage([worktree])).get(worktree) ?? 0
+    assert.ok(size > 0, 'the worktree has a measurable target')
+    writeAt(home, '.claude/paste-cache/tie.txt', 'x'.repeat(size), Date.now() - 30 * 86400e3)
+
+    const { items } = await scan({ roots: [dir], home })
+    assert.deepEqual(items.map((item) => item.cat), ['worktree-merged', 'agent-cache'])
+    assert.equal(items[0]!.size, items[1]!.size, 'the size sort keeps the tie in cleanup order')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('scan hides candidates with no measurable bytes', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   try {
@@ -113,13 +137,11 @@ test('scan resolves duplicate roots once', async () => {
   }
 })
 
-// the loading spinner only moves when the event loop turns: a fully synchronous scan
-// would starve its interval, so the pipeline yields between blocking forks
-test('scan yields to the event loop between blocking calls', async () => {
+// async subprocess calls let spinner timers run while the scan is in progress
+test('scan keeps the event loop available during async subprocess calls', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
   const dir = mkdtempSync(join(tmpdir(), 'toupeira-yield-'))
-  // scheduled before the scan: it can only have run if the loop turned mid-scan,
-  // since the assertion below runs as a microtask the moment scan resolves
+  // scheduled before the scan: it can only have run if the loop turned before scan resolved
   let loopTurned = false
   setImmediate(() => {
     loopTurned = true

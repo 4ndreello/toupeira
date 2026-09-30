@@ -73,7 +73,9 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
    is no longer always the target. `src/lib/sh.ts:diskUsage` runs one `du` per directory
    on purpose (a single batched `du` counts a hardlinked file once, so pnpm/bun
    worktrees would report near-zero) and one `statSync` per plain file, because
-   transcripts arrive by the thousand. `combinedSize` is the deduped headline total.
+   transcripts arrive by the thousand. Its async `du` calls and scan git calls share
+   a limiter capped at `os.availableParallelism()`. `combinedSize` is the deduped
+   headline total and remains synchronous.
 4. **dedupe** — `src/lib/scan.ts:dedupe` drops any item nested under an item whose action
    is `tree: true`; removing a worktree already takes its `node_modules`.
 5. **act** — `src/lib/actions.ts:remove` looks the action up in `ACTIONS` and enforces
@@ -160,8 +162,9 @@ README — the README is the npm page and stays user-facing.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
-- **`src/lib/sh.ts:git` swallows errors and returns `null`.** Callers must treat `null`
-  as "unknown", never as "no".
+- **`src/lib/sh.ts:git` and `gitAsync` swallow errors and return `null`.** Callers
+  must treat `null` as "unknown", never as "no". Scan reads use `gitAsync`; actions
+  keep the synchronous `git` path.
 - **The bin is a symlink** when installed by npm, so `src/index.ts` compares
   `import.meta.url` against `realpathSync(process.argv[1])` before running `main()`.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`

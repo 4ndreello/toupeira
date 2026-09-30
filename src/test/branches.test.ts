@@ -118,7 +118,32 @@ test('the graveyard reads gone state from the listing, three forks lighter', asy
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
     assert.deepEqual(sorted(by.keys()), ['feat/vanished', 'ghost'], 'only gone remote sides surface')
+    assert.deepEqual(items.map(actionBranch), ['feat/vanished', 'ghost'], 'candidate output keeps ref listing order')
     assert.match(by.get('feat/vanished')!.note, /origin\/feat\/vanished deleted/, 'the note names the whole upstream short')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a same-named tag cannot make an unmerged gone branch look safe', async () => {
+  const { dir, g, commit } = graveyardRepo()
+  try {
+    const remote = join(dir, 'remote.git')
+    g('init', '--bare', '-q', remote)
+    g('remote', 'add', 'origin', remote)
+    g('push', '-qu', 'origin', 'main')
+    g('remote', 'set-head', 'origin', 'main')
+
+    g('checkout', '-qb', 'feature')
+    commit('unique', 'local work\n', 'unmerged work')
+    g('push', '-qu', 'origin', 'feature')
+    g('push', '-q', 'origin', '--delete', 'feature')
+    g('fetch', '-q', '--prune', 'origin')
+    g('checkout', '-q', 'main')
+    g('tag', 'feature', 'main')
+
+    const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items.map(actionBranch), [], 'the unique commit keeps the branch out of the graveyard')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -137,9 +162,10 @@ test('the default branch is never offered, whatever its tracking config says', a
     // main now tracks a remote that no longer carries it, while origin/HEAD still names it
     g('remote', 'add', 'fork', join(dir, 'fork.git'))
     g('config', 'branch.main.remote', 'fork')
+    g('branch', 'origin/main')
     g('checkout', '-qb', 'work')
 
-    assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main', 'setup: the base is remote-qualified')
+    assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'remotes/origin/main', 'setup: a local branch makes the short remote name ambiguous')
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => actionBranch(i)), [], 'main is the default branch, not a graveyard candidate')
   } finally {

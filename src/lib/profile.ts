@@ -22,14 +22,6 @@ export function count(name: string, n = 1): void {
   counts.set(name, (counts.get(name) ?? 0) + n);
 }
 
-// executor form, not Promise.withResolvers: node 20 has no withResolvers and the matrix still covers it
-// one turn of the event loop: the scan blocks on git and du, so long loops await this
-// to let the loading spinner interval fire between forks
-export const breathe = (): Promise<void> =>
-  new Promise((r) => {
-    setImmediate(r);
-  });
-
 // sync fast path, async phases settle before the line prints: some scan phases yield
 // to the event loop now, so a sync-only timer would report ~0ms for them
 export function timed<T>(label: string, fn: () => T): T {
