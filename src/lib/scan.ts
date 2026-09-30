@@ -36,26 +36,23 @@ export async function scan(
   { days = 7, roots = [], home = HOME, onProgress = () => {} }: { days?: number; roots?: string[]; home?: string; onProgress?: (msg: string) => void } = {},
 ): Promise<ScanResult> {
   resetCounts();
-  const repos = timed("discovery", () => {
+  const repos = await timed("discovery", async () => {
     onProgress("reading agent sessions");
-    const repos = new Set<string>();
     // many agent cwds fold into the same repository, so resolve each input once
-    const resolved = new Map<string, string | null>();
-    for (const p of [...harnessCwds(home), ...roots]) {
-      if (!resolved.has(p)) resolved.set(p, mainRepoOf(p));
-      const r = resolved.get(p);
-      if (r) repos.add(r);
-    }
-    return repos;
+    const paths = [...new Set([...harnessCwds(home), ...roots])];
+    const resolved = await Promise.all(paths.map((path) => mainRepoOf(path)));
+    return new Set(resolved.filter((repo): repo is string => repo !== null));
   });
 
   const ctx = { repos, days, home, now: Date.now(), onProgress, cache: new Map<string, unknown>() };
   const items: Item[] = [];
   const kept: { path: string; why: string }[] = [];
-  for (const cleanup of CLEANUPS) {
+  const outputs = await Promise.all(CLEANUPS.map((cleanup) => {
     // first cat key names the phase in prof lines, so the report reads
     // collect worktree-merged instead of collect 3
-    const out = await timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
+    return timed(`collect ${Object.keys(cleanup.cats)[0] ?? "?"}`, () => cleanup.collect(ctx));
+  }));
+  for (const out of outputs) {
     items.push(...out.items);
     if (out.kept) kept.push(...out.kept);
   }

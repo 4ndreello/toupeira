@@ -69,7 +69,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
       assert.equal(i.action.kind, 'branch-delete')
     }
 
-    remove(by.get('gone')!)
+    await remove(by.get('gone')!)
     assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
     assert.match(g('branch', '--list', 'local-only'), /local-only/, 'a never-pushed branch stays, absorbed or not')
   } finally {
@@ -118,7 +118,32 @@ test('the graveyard reads gone state from the listing, three forks lighter', asy
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
     assert.deepEqual(sorted(by.keys()), ['feat/vanished', 'ghost'], 'only gone remote sides surface')
+    assert.deepEqual(items.map(actionBranch), ['feat/vanished', 'ghost'], 'candidate output keeps ref listing order')
     assert.match(by.get('feat/vanished')!.note, /origin\/feat\/vanished deleted/, 'the note names the whole upstream short')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a same-named tag cannot make an unmerged gone branch look safe', async () => {
+  const { dir, g, commit } = graveyardRepo()
+  try {
+    const remote = join(dir, 'remote.git')
+    g('init', '--bare', '-q', remote)
+    g('remote', 'add', 'origin', remote)
+    g('push', '-qu', 'origin', 'main')
+    g('remote', 'set-head', 'origin', 'main')
+
+    g('checkout', '-qb', 'feature')
+    commit('unique', 'local work\n', 'unmerged work')
+    g('push', '-qu', 'origin', 'feature')
+    g('push', '-q', 'origin', '--delete', 'feature')
+    g('fetch', '-q', '--prune', 'origin')
+    g('checkout', '-q', 'main')
+    g('tag', 'feature', 'main')
+
+    const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(items.map(actionBranch), [], 'the unique commit keeps the branch out of the graveyard')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -137,9 +162,10 @@ test('the default branch is never offered, whatever its tracking config says', a
     // main now tracks a remote that no longer carries it, while origin/HEAD still names it
     g('remote', 'add', 'fork', join(dir, 'fork.git'))
     g('config', 'branch.main.remote', 'fork')
+    g('branch', 'origin/main')
     g('checkout', '-qb', 'work')
 
-    assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main', 'setup: the base is remote-qualified')
+    assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'remotes/origin/main', 'setup: a local branch makes the short remote name ambiguous')
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => actionBranch(i)), [], 'main is the default branch, not a graveyard candidate')
   } finally {
@@ -147,10 +173,10 @@ test('the default branch is never offered, whatever its tracking config says', a
   }
 })
 
-test('branch-delete refuses anything that is not a plain branch name', () => {
+test('branch-delete refuses anything that is not a plain branch name', async () => {
   for (const bad of ['HEAD', '-oProxyCommand=x', 'a..b', 'x.lock', 42] as unknown[]) {
-    assert.throws(
-      () => remove({ cat: 't', repo: null, path: '/repo', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/repo', branch: bad as unknown as string } } as unknown as Item),
+    await assert.rejects(
+      remove({ cat: 't', repo: null, path: '/repo', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/repo', branch: bad as unknown as string } } as unknown as Item),
       /refused, unsafe branch name/
     )
   }

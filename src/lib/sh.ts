@@ -1,20 +1,43 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { breathe, count, verboseProfile } from "./profile.js";
+import { availableParallelism } from "node:os";
+import { count, verboseProfile } from "./profile.js";
 
-export function git(args: string[], cwd: string): string | null {
-  // counted always, printed per call only at verbose: a squash-merge check forks
-  // five times per branch, which is exactly what that line makes visible
-  count("git");
-  if (verboseProfile()) process.stderr.write(`prof git ${args.join(" ")}\n`);
+const maxInFlight = availableParallelism();
+let inFlight = 0;
+const waiting: (() => void)[] = [];
+
+export async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (inFlight >= maxInFlight) {
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  } else {
+    inFlight++;
+  }
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64e6 }).trim();
-  } catch {
-    return null;
+    return await fn();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else inFlight--;
   }
 }
 
-function du(args: string[]): string {
+export function gitAsync(args: string[], cwd: string): Promise<string | null> {
+  return limited(() => new Promise((resolve) => {
+    count("git");
+    if (verboseProfile()) process.stderr.write(`prof git ${args.join(" ")}\n`);
+    try {
+      const child = execFile("git", args, { cwd, encoding: "utf8", maxBuffer: 64e6 }, (error, stdout) => {
+        resolve(error ? null : stdout.trim());
+      });
+      child.stdin?.end();
+    } catch {
+      resolve(null);
+    }
+  }));
+}
+
+function duSync(args: string[]): string {
   count("du");
   try {
     return execFileSync("du", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64e6 });
@@ -22,6 +45,22 @@ function du(args: string[]): string {
     const err = e as { stdout?: string };
     return err.stdout || "";
   }
+}
+
+function duAsync(args: string[]): Promise<string> {
+  return limited(() => new Promise((resolve) => {
+    count("du");
+    let stdout = "";
+    try {
+      const child = spawn("du", args, { stdio: ["ignore", "pipe", "ignore"] });
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => { stdout += chunk; });
+      child.on("error", () => resolve(stdout));
+      child.on("close", () => resolve(stdout));
+    } catch {
+      resolve(stdout);
+    }
+  }));
 }
 
 // -k, not gnu b: bsd du on macos has no b and exits with illegal option, which used to
@@ -32,24 +71,23 @@ const KB = 1024;
 // whichever path reaches it first, so pnpm and bun worktrees report near zero at random.
 // ponytail: block granularity, a directory of tiny files rounds up per file, per platform
 export async function diskUsage(paths: string[], onProgress: (msg: string) => void = () => {}): Promise<Map<string, number>> {
-  const sizes = new Map<string, number>();
-  let n = 0;
-  for (const p of paths) {
-    onProgress(`measuring ${++n}/${paths.length}`);
-    // one loop turn between paths: du forks block, so the spinner only moves here
-    await breathe();
+  let completed = 0;
+  const progress = (): void => onProgress(`measuring ${++completed}/${paths.length}`);
+  if (paths.length) onProgress(`measuring 0/${paths.length}`);
+  const rows = await Promise.all(paths.map(async (p) => {
     // a single file is one stat, not one fork: transcripts arrive by the thousand
     const st = statSync(p, { throwIfNoEntry: false });
     if (st?.isFile()) {
       count("stat-file");
-      sizes.set(p, st.size);
-      continue;
+      progress();
+      return [p, st.size] as const;
     }
     count("du-dir");
-    const m = du(["-sk", "--", p]).match(/^(\d+)\t/);
-    sizes.set(p, m?.[1] ? Number(m[1]) * KB : 0);
-  }
-  return sizes;
+    const m = (await duAsync(["-sk", "--", p])).match(/^(\d+)\t/);
+    progress();
+    return [p, m?.[1] ? Number(m[1]) * KB : 0] as const;
+  }));
+  return new Map(rows);
 }
 
 // combined total, deduped: what the disk actually gets back if all of these go
@@ -58,7 +96,7 @@ export function combinedSize(paths: string[]): number {
   if (!live.length) return 0;
   let total = 0;
   for (let i = 0; i < live.length; i += 200) {
-    const out = du(["-sck", "--", ...live.slice(i, i + 200)]);
+    const out = duSync(["-sck", "--", ...live.slice(i, i + 200)]);
     const m = out.match(/^(\d+)\ttotal$/m);
     total += m?.[1] ? Number(m[1]) * KB : 0;
   }

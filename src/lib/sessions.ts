@@ -1,7 +1,12 @@
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const CWD_RE = /"cwd":"([^"]+)"/;
+
+const HEAD_READ_BYTES = 4 * 1024;
+const DEFAULT_HEAD_BYTES = 256 * 1024;
+// only bytes read are decoded, so the shared scratch buffer need not be zero-filled
+const HEAD_BUFFER = Buffer.allocUnsafe(DEFAULT_HEAD_BYTES);
 
 export function walkFiles(root: string, depth: number, ext: string, out: string[] = []): string[] {
   if (depth < 0 || !existsSync(root)) return out;
@@ -38,18 +43,30 @@ export function dirNames(root: string): string[] {
 }
 
 // session transcripts run to hundreds of mb; cwd is in the header, so read the head only
-export function headMatch(file: string, re: RegExp, bytes = 256 * 1024): string | null {
+export function headMatch(file: string, re: RegExp, bytes = DEFAULT_HEAD_BYTES): string | null {
   let fd: number | undefined;
   try {
     fd = openSync(file, "r");
-    const buf = Buffer.alloc(bytes);
-    const n = readSync(fd, buf, 0, bytes, 0);
-    const m = buf.subarray(0, n).toString("utf8").match(re);
+    const buf = bytes > HEAD_BUFFER.length ? Buffer.allocUnsafe(bytes) : HEAD_BUFFER;
+    const firstSize = Math.min(HEAD_READ_BYTES, bytes);
+    let n = readSync(fd, buf, 0, firstSize, 0);
+    let m = buf.subarray(0, n).toString("utf8").match(re);
+    // re must use a delimiter the value cannot contain, so crossing values need the second read
+    if (!m && n < bytes && (n === firstSize || fstatSync(fd).size > n)) {
+      n += readSync(fd, buf, n, bytes - n, n);
+      m = buf.subarray(0, n).toString("utf8").match(re);
+    }
     return m?.[1] ?? null;
   } catch {
     return null;
   } finally {
-    if (fd !== undefined) closeSync(fd);
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // cleanup failure must not replace the null-on-error result
+      }
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "toupeira",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "Clean up what coding agents leave behind: merged git worktrees, their node_modules, and orphan session logs.",
   "keywords": [
     "claude-code",
@@ -35,7 +35,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "coverage": "npm run build && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-lines=79 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info dist/test/*.test.js",
+    "coverage": "npm run build && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-lines=88 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info dist/test/*.test.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
   },

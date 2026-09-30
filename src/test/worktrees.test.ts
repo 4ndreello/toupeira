@@ -6,7 +6,6 @@ import { basename, join } from 'node:path'
 import { parseWorktrees, remove } from '../index.js'
 import { harnessCwds } from '../lib/harnesses.js'
 import { mainRepoOf } from '../lib/repo.js'
-import { git } from '../lib/sh.js'
 import * as worktrees from '../lib/cleanups/worktrees.js'
 import { gitIn, gitAt, initRepo } from './helpers.js'
 
@@ -27,23 +26,21 @@ test('t3 code feeds its parked worktrees into the regular worktree cleanup', asy
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const repoDir = mkdtempSync(join(tmpdir(), 'toupeira-t3repo-'))
   try {
-    const g = (a: string[]): string | null => git(a, repoDir)
-    g(['init', '-q', '-b', 'main'])
-    g(['config', 'user.email', 't@t'])
-    g(['config', 'user.name', 't'])
+    const g = initRepo(repoDir)
     writeFileSync(join(repoDir, 'a'), 'one\n')
-    g(['add', '.'])
-    g(['commit', '-qm', 'init'])
+    g('add', '.')
+    g('commit', '-qm', 'init')
 
     // the way t3 code parks an agent workspace: ~/.t3/worktrees/<repo>/<branch>
     const wt = join(home, '.t3/worktrees', basename(repoDir), 'feature-x')
     mkdirSync(wt, { recursive: true })
-    g(['worktree', 'add', wt, '-b', 'feature-x', 'main'])
+    g('worktree', 'add', wt, '-b', 'feature-x', 'main')
 
     assert.equal(harnessCwds(home).has(wt), true, 'the parked workspace counts as a recorded working directory')
-    assert.equal(realpathSync(mainRepoOf(wt)!), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
+    assert.equal(realpathSync((await mainRepoOf(wt))!), realpathSync(repoDir), 'it resolves to its main repository like any worktree')
 
-    const repos = new Set<string>([...harnessCwds(home)].map((p) => mainRepoOf(p)).filter((v): v is string => Boolean(v)))
+    const resolved = await Promise.all([...harnessCwds(home)].map((path) => mainRepoOf(path)))
+    const repos = new Set<string>(resolved.filter((repo): repo is string => Boolean(repo)))
     const { items } = await worktrees.collect({ repos, days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map((i) => [i.cat, i.path]), [['worktree-merged', wt]], 'a clean merged t3 workspace is offered for removal')
   } finally {
@@ -136,11 +133,73 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     assert.match(why(/recent \(\d+d\)/)!.path, /wt-fresh$/, 'same shape as stale, held back only by age')
 
     // both action kinds really run against the repo
-    assert.equal(remove(byCat('worktree-prunable')[0]!), true, 'prune clears the dead registration')
+    assert.equal(await remove(byCat('worktree-prunable')[0]!), true, 'prune clears the dead registration')
     const done = byCat('worktree-merged')[0]!
-    assert.equal(remove(done), true)
+    assert.equal(await remove(done), true)
     assert.equal(existsSync(join(dir, 'wt-done')), false, 'worktree-remove really removes the tree')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('concurrent worktree collection preserves repo, candidate, item and kept order', async () => {
+  const old = new Date(Date.now() - 40 * 86400e3).toISOString()
+  const makeRepo = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'toupeira-order-'))
+    const g = gitIn(dir)
+    const gc = gitAt(dir, old)
+    initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'one\n')
+    g('add', '.')
+    gc(['commit', '-qm', 'init'])
+    for (const branch of ['merged-a', 'merged-b']) {
+      g('branch', branch)
+      g('worktree', 'add', join(dir, `wt-${branch}`), branch)
+      mkdirSync(join(dir, `wt-${branch}`, 'node_modules'), { recursive: true })
+    }
+    g('checkout', '-qb', 'lonely')
+    writeFileSync(join(dir, 'lonely'), 'unique\n')
+    g('add', '.')
+    gc(['commit', '-qm', 'unique work'])
+    g('checkout', '-q', 'main')
+    g('worktree', 'add', join(dir, 'wt-lonely'), 'lonely')
+    g('worktree', 'add', join(dir, 'wt-dirty'), '-b', 'dirty', 'main')
+    writeFileSync(join(dir, 'wt-dirty', 'scratch'), 'uncommitted\n')
+    return { dir, g }
+  };
+
+  const first = makeRepo()
+  const second = makeRepo()
+  try {
+    const repos = [first.dir, second.dir]
+    const candidates = repos.flatMap((repo) => {
+      const g = gitIn(repo)
+      return parseWorktrees(g('worktree', 'list', '--porcelain'))
+        .filter((worktree) => worktree.path !== repo && !worktree.bare)
+        .map((worktree) => ({ repo, path: worktree.path, branch: worktree.branch! }))
+    });
+    const { items, kept } = await worktrees.collect({ repos: new Set(repos), days: 7, now: Date.now(), onProgress() {} });
+    const expectedItems = candidates.flatMap(({ repo, path, branch }) => {
+      const label = `${branch} (40d)`;
+      const expected = [];
+      const nodeModules = join(path, 'node_modules');
+      if (existsSync(nodeModules)) {
+        expected.push({ cat: 'node_modules', repo, path: nodeModules, size: 0, safe: true, note: `${label}, reinstallable`, action: { kind: 'rm', guard: '/node_modules' } });
+      }
+      if (branch === 'merged-a' || branch === 'merged-b') {
+        expected.push({ cat: 'worktree-merged', repo, path, size: 0, safe: true, note: `${label}, already in main`, action: { kind: 'worktree-remove', repo } });
+      }
+      return expected;
+    });
+    const expectedKept = candidates.flatMap(({ path, branch }) => {
+      if (branch === 'lonely') return [{ path, why: 'no upstream, these commits exist nowhere else' }];
+      if (branch === 'dirty') return [{ path, why: 'uncommitted changes' }];
+      return [];
+    });
+    assert.deepEqual(items, expectedItems, 'all item fields stay in sequential repo and worktree order');
+    assert.deepEqual(kept, expectedKept, 'kept reasons stay in sequential repo and worktree order');
+  } finally {
+    rmSync(first.dir, { recursive: true, force: true });
+    rmSync(second.dir, { recursive: true, force: true });
+  }
+});

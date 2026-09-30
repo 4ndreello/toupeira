@@ -22,7 +22,7 @@ the bin — so `files` in `package.json` must keep listing `dist`.
 ## Quality gate
 
 Coverage is enforced by node itself, in the `coverage` job:
-`--test-coverage-lines=79`. That number is a **ratchet** — the pull request that
+`--test-coverage-lines=88`. That number is a **ratchet** — the pull request that
 raises coverage is the one that raises the floor, and it never comes back down
 to make a pull request pass. It has its own job because the
 flag does not exist on node 20, which the matrix still has to cover.
@@ -73,7 +73,9 @@ A scan is one pipeline: discover repos → collect items → measure → dedupe 
    is no longer always the target. `src/lib/sh.ts:diskUsage` runs one `du` per directory
    on purpose (a single batched `du` counts a hardlinked file once, so pnpm/bun
    worktrees would report near-zero) and one `statSync` per plain file, because
-   transcripts arrive by the thousand. `combinedSize` is the deduped headline total.
+   transcripts arrive by the thousand. Its async `du` calls and scan git calls share
+   a limiter capped at `os.availableParallelism()`. `combinedSize` is the deduped
+   headline total and remains synchronous.
 4. **dedupe** — `src/lib/scan.ts:dedupe` drops any item nested under an item whose action
    is `tree: true`; removing a worktree already takes its `node_modules`.
 5. **act** — `src/lib/actions.ts:remove` looks the action up in `ACTIONS` and enforces
@@ -138,7 +140,7 @@ README — the README is the npm page and stays user-facing.
   `chromium_headless_shell-<build>`; they are their own family, so
   `playwright install --only-shell` of a newer build cannot make the last full
   chromium look superseded.
-- **`remove()` returning `false` means it did not happen.** `src/index.ts` turns that
+- **`remove()` resolving to `false` means it did not happen.** `removeAll()` turns that
   into a `✗` and adds nothing to `freed`, so an absent or wedged tool never prints a
   success. `command` also runs under a timeout for the same reason.
 - **Lossy project dir names.** Agents encode `/` as `-`, so `/a/b-c` and `/a-b/c`
@@ -160,8 +162,9 @@ README — the README is the npm page and stays user-facing.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
-- **`src/lib/sh.ts:git` swallows errors and returns `null`.** Callers must treat `null`
-  as "unknown", never as "no".
+- **`src/lib/sh.ts:gitAsync` swallows errors and resolves `null`.** Callers must
+  treat `null` as "unknown", never as "no". Scan reads and removal actions use
+  `gitAsync`.
 - **The bin is a symlink** when installed by npm, so `src/index.ts` compares
   `import.meta.url` against `realpathSync(process.argv[1])` before running `main()`.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`

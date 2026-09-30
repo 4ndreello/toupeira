@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
-import { git } from "./sh.js";
+import { spawn } from "node:child_process";
+import { rm as fsRm } from "node:fs/promises";
+import { gitAsync, limited } from "./sh.js";
 import type { Item } from "../types.js";
 
 // Adding an action is one entry here.
@@ -14,28 +14,67 @@ import type { Item } from "../types.js";
 interface ActionDef {
   tree: boolean;
   frees?: boolean;
-  run: (item: Item) => boolean;
+  run: (item: Item, removeFile?: FileRm) => Promise<boolean>;
+}
+
+type FileRm = (path: string, options: { recursive: true; force: true }) => Promise<void>;
+
+function limitedRm(path: string, removeFile: FileRm): Promise<void> {
+  return limited(() => removeFile(path, { recursive: true, force: true }));
+}
+
+export function runCommand(cmd: string[], timeoutMs = 5 * 60_000): Promise<boolean> {
+  const [file, ...args] = cmd;
+  if (!file) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const clearTimer = (): void => {
+      if (timer) clearTimeout(timer);
+    };
+    try {
+      const child = spawn(file, args, { shell: false, stdio: "ignore" });
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs);
+      child.once("error", () => {
+        clearTimer();
+        resolve(false);
+      });
+      child.once("close", (code) => {
+        clearTimer();
+        resolve(code === 0 && !timedOut);
+      });
+    } catch {
+      clearTimer();
+      resolve(false);
+    }
+  });
 }
 
 export const ACTIONS: Record<string, ActionDef> = {
-  prune: { tree: false, run: ({ action }) => action.kind === "prune" && git(["worktree", "prune"], action.repo) !== null },
+  prune: {
+    tree: false,
+    run: async ({ action }) => action.kind === "prune" && (await gitAsync(["worktree", "prune"], action.repo)) !== null,
+  },
   "worktree-remove": {
     tree: true,
-    run: ({ action, path }) => action.kind === "worktree-remove" && git(["worktree", "remove", path], action.repo) !== null,
+    run: async ({ action, path }) => action.kind === "worktree-remove" && (await gitAsync(["worktree", "remove", path], action.repo)) !== null,
   },
   // deletes a listed set of entries, not item.path, see the guard in remove()
   "rm-files": {
     tree: false,
-    run: ({ action }) => {
+    run: async ({ action }, removeFile = fsRm) => {
       if (action.kind !== "rm-files") return false;
-      for (const f of action.files) rmSync(f, { recursive: true, force: true });
+      for (const file of action.files) await limitedRm(file, removeFile);
       return true;
     },
   },
   rm: {
     tree: true,
-    run: ({ path }) => {
-      rmSync(path, { recursive: true, force: true });
+    run: async ({ path }, removeFile = fsRm) => {
+      await limitedRm(path, removeFile);
       return true;
     },
   },
@@ -43,7 +82,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   "branch-delete": {
     tree: false,
     frees: false,
-    run: ({ action }) => action.kind === "branch-delete" && git(["branch", "-D", action.branch], action.repo) !== null,
+    run: async ({ action }) => action.kind === "branch-delete" && (await gitAsync(["branch", "-D", action.branch], action.repo)) !== null,
   },
   // runs one exact argv list, never through a shell, the cleanup tables are the only
   // place commands are written down. the tool decides what it frees, so nothing here is
@@ -52,21 +91,11 @@ export const ACTIONS: Record<string, ActionDef> = {
   command: {
     tree: false,
     frees: false,
-    run: ({ action }) => {
-      if (action.kind !== "command") return false;
-      try {
-        const first: string | undefined = action.cmd[0];
-        if (!first) return false;
-        execFileSync(first, action.cmd.slice(1), { stdio: "ignore", timeout: 5 * 60_000 });
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    run: ({ action }) => action.kind === "command" ? runCommand(action.cmd) : Promise.resolve(false),
   },
 };
 
-export function remove(item: Item): boolean {
+export async function remove(item: Item): Promise<boolean> {
   const action = ACTIONS[item.action.kind];
   if (!action) return false;
   // checked out here, not inside the table, so a new action cannot forget it
@@ -76,37 +105,98 @@ export function remove(item: Item): boolean {
   // a file list is guarded per entry: item.path is a live project or a cache
   // directory, never the target. ext narrows it further where the category has one
   if ("files" in item.action) {
-    for (const f of item.action.files ?? []) {
-      if (!f.startsWith(`${item.action.root}/`) || (item.action.ext && !f.endsWith(item.action.ext))) {
-        throw new Error(`refused, outside its category: ${f}`);
+    for (const file of item.action.files ?? []) {
+      if (!file.startsWith(`${item.action.root}/`) || (item.action.ext && !file.endsWith(item.action.ext))) {
+        throw new Error(`refused, outside its category: ${file}`);
       }
     }
   }
   // git branch -D would happily eat head, option looking names, range tricks or a
   // lock file, and the path guard above cannot see the ref name, vet it here
   if (item.action.kind === "branch-delete") {
-    const b: unknown = item.action.branch;
+    const branch: unknown = item.action.branch;
     const ok =
-      typeof b === "string" &&
-      /^[A-Za-z0-9._/-]+$/.test(b) &&
-      !b.startsWith("-") &&
-      !b.includes("..") &&
-      !b.endsWith(".lock") &&
-      b !== "HEAD";
-    if (!ok) throw new Error(`refused, unsafe branch name: ${String(b)}`);
+      typeof branch === "string" &&
+      /^[A-Za-z0-9._/-]+$/.test(branch) &&
+      !branch.startsWith("-") &&
+      !branch.includes("..") &&
+      !branch.endsWith(".lock") &&
+      branch !== "HEAD";
+    if (!ok) throw new Error(`refused, unsafe branch name: ${String(branch)}`);
   }
   // a command runs by basename through path, never a path, and no argument may
   // smuggle a null byte past the exec, the argv comes from a cleanup table,
   // but remove() trusts nothing it has not vetted itself
   if (item.action.kind === "command") {
-    const c: unknown = item.action.cmd;
+    const command: unknown = item.action.cmd;
     const ok =
-      Array.isArray(c) &&
-      c.length > 0 &&
-      c.every((a) => typeof a === "string" && a && !a.includes("\0")) &&
-      typeof (c as string[])[0] === "string" &&
-      !((c as string[])[0] as string).includes("/");
+      Array.isArray(command) &&
+      command.length > 0 &&
+      command.every((arg) => typeof arg === "string" && arg && !arg.includes("\0")) &&
+      typeof (command as string[])[0] === "string" &&
+      !((command as string[])[0] as string).includes("/");
     if (!ok) throw new Error("refused, malformed command");
   }
   return action.run(item);
+}
+
+export interface RemoveResult {
+  item: Item;
+  ok: boolean;
+  message?: string;
+  freed: number;
+}
+
+function laneKey(item: Item): string | null {
+  switch (item.action.kind) {
+    case "prune":
+    case "worktree-remove":
+    case "branch-delete":
+      return `git:${item.action.repo}`;
+    case "command":
+      return "command";
+    default:
+      return null;
+  }
+}
+
+export async function removeAll(
+  items: Item[],
+  onResult: (result: RemoveResult) => void,
+  run: (item: Item) => Promise<boolean> = remove,
+): Promise<void> {
+  const byLane = new Map<string, Item[]>();
+  const lanes: Item[][] = [];
+  for (const item of items) {
+    const key = laneKey(item);
+    if (key === null) {
+      lanes.push([item]);
+      continue;
+    }
+    const lane = byLane.get(key);
+    if (lane) lane.push(item);
+    else byLane.set(key, [item]);
+  }
+  // store prunes run last so they see node_modules removed by the other lanes
+  const commandLane = byLane.get("command");
+  byLane.delete("command");
+  lanes.push(...byLane.values());
+
+  const runLane = async (lane: Item[]): Promise<void> => {
+    for (const item of lane) {
+      let result: RemoveResult;
+      try {
+        const ok = await run(item);
+        result = ok
+          ? { item, ok, freed: item.size }
+          : { item, ok, message: "the removal reported a failure", freed: 0 };
+      } catch (error) {
+        result = { item, ok: false, message: error instanceof Error ? error.message : String(error), freed: 0 };
+      }
+      onResult(result);
+    }
+  };
+
+  await Promise.all(lanes.map(runLane));
+  if (commandLane) await runLane(commandLane);
 }
