@@ -93,7 +93,7 @@ test('the newer harnesses read their layouts out of one fake HOME', () => {
   }
 })
 
-test('orphan sessions are offered only when the project they encode is really gone', () => {
+test('orphan sessions are offered only when the project they encode is really gone', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const live = mkdtempSync(join(tmpdir(), 'toupeira-live-'))
   try {
@@ -110,7 +110,7 @@ test('orphan sessions are offered only when the project they encode is really go
     assert.equal(items[0]!.safe, true)
     assert.equal(items[0]!.action.kind, 'rm')
 
-    assert.equal(remove(items[0]!), true)
+    assert.equal(await remove(items[0]!), true)
     assert.equal(existsSync(join(home, '.claude/projects/-tmp-toupeira-vanished')), false, 'remove() really deletes it')
     assert.equal(existsSync(live), true, 'the live project was never a candidate')
     assert.equal(existsSync(join(home, '.cursor/projects/empty-window')), true, 'scratch state stays')

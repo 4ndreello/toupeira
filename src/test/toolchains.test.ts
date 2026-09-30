@@ -21,7 +21,7 @@ test('pinsMatch covers equality and segment-boundary prefixes only', () => {
   assert.equal(toolchains.pinsMatch('21', '20.11.0'), false)
 })
 
-test('idle toolchains are the unpinned, unprotected, non-newest installs', () => {
+test('idle toolchains are the unpinned, unprotected, non-newest installs', async () => {
   const home = versionsHome('.nvm/versions/node', ['v16.20.0', 'v18.19.0', 'v20.11.0', 'v22.5.0'])
   const repo = mkdtempSync(join(tmpdir(), 'toupeira-repo-'))
   try {
@@ -35,11 +35,11 @@ test('idle toolchains are the unpinned, unprotected, non-newest installs', () =>
     assert.match(items[0]!.note, /no pin among 1 repo\(s\)/)
     assert.equal(items[0]!.action.kind, 'rm')
 
-    remove(items[0]!)
+    await remove(items[0]!)
     assert.equal(existsSync(join(home, '.nvm/versions/node/v16.20.0')), false, 'remove() really deletes it')
 
     const outside = { cat: 't', repo: null, path: '/usr', size: 0, safe: true, note: 't', action: { kind: 'rm', guard: `${home}/.nvm/versions/node/` } } as unknown as Parameters<typeof remove>[0]
-    assert.throws(() => remove(outside), /outside its category/)
+    await assert.rejects(remove(outside), /outside its category/)
   } finally {
     rmSync(home, { recursive: true, force: true })
     rmSync(repo, { recursive: true, force: true })

@@ -140,7 +140,7 @@ README — the README is the npm page and stays user-facing.
   `chromium_headless_shell-<build>`; they are their own family, so
   `playwright install --only-shell` of a newer build cannot make the last full
   chromium look superseded.
-- **`remove()` returning `false` means it did not happen.** `src/index.ts` turns that
+- **`remove()` resolving to `false` means it did not happen.** `removeAll()` turns that
   into a `✗` and adds nothing to `freed`, so an absent or wedged tool never prints a
   success. `command` also runs under a timeout for the same reason.
 - **Lossy project dir names.** Agents encode `/` as `-`, so `/a/b-c` and `/a-b/c`
@@ -163,8 +163,8 @@ README — the README is the npm page and stays user-facing.
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
 - **`src/lib/sh.ts:git` and `gitAsync` swallow errors and return `null`.** Callers
-  must treat `null` as "unknown", never as "no". Scan reads use `gitAsync`; actions
-  keep the synchronous `git` path.
+  must treat `null` as "unknown", never as "no". Scan reads and removal actions use
+  `gitAsync`; synchronous helpers still use `git`.
 - **The bin is a symlink** when installed by npm, so `src/index.ts` compares
   `import.meta.url` against `realpathSync(process.argv[1])` before running `main()`.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`

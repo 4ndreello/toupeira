@@ -137,9 +137,9 @@ test('the worktree cleanup offers the provably safe and holds the rest with reas
     assert.match(why(/recent \(\d+d\)/)!.path, /wt-fresh$/, 'same shape as stale, held back only by age')
 
     // both action kinds really run against the repo
-    assert.equal(remove(byCat('worktree-prunable')[0]!), true, 'prune clears the dead registration')
+    assert.equal(await remove(byCat('worktree-prunable')[0]!), true, 'prune clears the dead registration')
     const done = byCat('worktree-merged')[0]!
-    assert.equal(remove(done), true)
+    assert.equal(await remove(done), true)
     assert.equal(existsSync(join(dir, 'wt-done')), false, 'worktree-remove really removes the tree')
   } finally {
     rmSync(dir, { recursive: true, force: true })

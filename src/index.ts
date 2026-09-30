@@ -5,7 +5,7 @@ import { elapsed, human, short, HOME } from "./lib/format.js";
 import { report } from "./lib/doctor.js";
 import { combinedSize } from "./lib/sh.js";
 import { scan, targets } from "./lib/scan.js";
-import { remove } from "./lib/actions.js";
+import { removeAll } from "./lib/actions.js";
 import { LOG, log } from "./lib/log.js";
 import { banner, loadingScreen } from "./lib/logo.js";
 import { C, confirm, keptList, pick, summary } from "./lib/ui.js";
@@ -14,7 +14,8 @@ export { decodeProjectDir } from "./lib/sessions.js";
 export { harnesses, harnessCwds } from "./lib/harnesses.js";
 export { isContentMerged, parseWorktrees } from "./lib/repo.js";
 export { treeRows } from "./lib/ui.js";
-export { banner, human, remove, scan };
+export { remove } from "./lib/actions.js";
+export { banner, human, scan };
 
 const HELP = `toupeira - clean up what coding agents leave behind
 
@@ -90,22 +91,19 @@ async function main(): Promise<void> {
   if (!yes && !(await confirm(`\nremove ${chosen.length} item(s), ${human(sum)}? [y/N] `))) return console.log("cancelled.");
 
   let freed = 0;
-  for (const i of chosen) {
+  await removeAll(chosen, ({ item, ok, message, freed: contribution }) => {
     // label names the target when it is not the path (a ref), so the line and the log
     // say which branch went instead of printing the repo once per branch
-    const name = i.label ?? i.path;
-    try {
-      // a removal that reports false did not happen, an absent or wedged tool must not
-      // print a tick and count its store as freed
-      if (!remove(i)) throw new Error("the removal reported a failure");
-      freed += i.size;
-      log(`removed ${i.cat} ${name} ${i.size}`);
+    const name = item.label ?? item.path;
+    freed += contribution;
+    if (ok) {
+      log(`removed ${item.cat} ${name} ${item.size}`);
       console.log(`  \x1b[32m✓\x1b[0m ${short(name)}`);
-    } catch (e) {
-      log(`failed ${i.cat} ${name} ${(e as Error).message}`);
-      console.log(`  \x1b[31m✗\x1b[0m ${short(name)} - ${(e as Error).message}`);
+    } else {
+      log(`failed ${item.cat} ${name} ${message}`);
+      console.log(`  \x1b[31m✗\x1b[0m ${short(name)} - ${message}`);
     }
-  }
+  });
   console.log(`\nfreed ${human(freed)}. log at ${short(LOG)}`);
 }
 

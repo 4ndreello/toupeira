@@ -69,7 +69,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
       assert.equal(i.action.kind, 'branch-delete')
     }
 
-    remove(by.get('gone')!)
+    await remove(by.get('gone')!)
     assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
     assert.match(g('branch', '--list', 'local-only'), /local-only/, 'a never-pushed branch stays, absorbed or not')
   } finally {
@@ -173,10 +173,10 @@ test('the default branch is never offered, whatever its tracking config says', a
   }
 })
 
-test('branch-delete refuses anything that is not a plain branch name', () => {
+test('branch-delete refuses anything that is not a plain branch name', async () => {
   for (const bad of ['HEAD', '-oProxyCommand=x', 'a..b', 'x.lock', 42] as unknown[]) {
-    assert.throws(
-      () => remove({ cat: 't', repo: null, path: '/repo', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/repo', branch: bad as unknown as string } } as unknown as Item),
+    await assert.rejects(
+      remove({ cat: 't', repo: null, path: '/repo', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/repo', branch: bad as unknown as string } } as unknown as Item),
       /refused, unsafe branch name/
     )
   }

@@ -92,7 +92,7 @@ test('a superseded build with a fresh mtime is held back anyway', () => {
   }
 })
 
-test('a browser build is removed by its list, and only from inside the tool root', () => {
+test('a browser build is removed by its list, and only from inside the tool root', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   try {
     const root = join(home, '.cache/ms-playwright')
@@ -100,11 +100,11 @@ test('a browser build is removed by its list, and only from inside the tool root
     mkdirSync(build, { recursive: true })
     writeFileSync(join(build, 'chrome'), 'x')
     const i = { cat: 'browser-cache', repo: null, path: root, size: 0, safe: true, note: 't', action: { kind: 'rm-files', root, files: [build] } } as unknown as Item
-    assert.equal(remove(i), true)
+    assert.equal(await remove(i), true)
     assert.equal(existsSync(build), false, 'the superseded build goes')
     assert.equal(existsSync(root), true, 'the tool root stays')
 
-    assert.throws(() => remove(withFiles(i, [join(home, '.cache/other/chromium-99')])), /refused, outside its category/)
+    await assert.rejects(remove(withFiles(i, [join(home, '.cache/other/chromium-99')])), /refused, outside its category/)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
