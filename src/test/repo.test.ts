@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -93,6 +94,22 @@ test('gitAsync resolves command failures to null', async () => {
   await assert.doesNotReject(async () => {
     assert.equal(await gitAsync(['--version'], '/not/a/repository'), null)
   })
+})
+
+test('gitAsync closes stdin for commands that read it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-git-stdin-'))
+  const expected = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'
+  try {
+    initRepo(dir)
+    const script = `import { gitAsync } from ${JSON.stringify(new URL('../lib/sh.js', import.meta.url).href)}; const result = await gitAsync(['hash-object', '--stdin'], ${JSON.stringify(dir)}); if (result !== ${JSON.stringify(expected)}) { process.stderr.write(String(result)); process.exitCode = 1; } else process.stdout.write(result);`
+    const actual = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      timeout: 2000,
+    })
+    assert.equal(actual, expected)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('isContentMerged shares a merge-base tree read within a scan', async () => {

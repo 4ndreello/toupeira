@@ -162,9 +162,9 @@ README — the README is the npm page and stays user-facing.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
   unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
   unknown = keep).
-- **`src/lib/sh.ts:git` and `gitAsync` swallow errors and return `null`.** Callers
-  must treat `null` as "unknown", never as "no". Scan reads and removal actions use
-  `gitAsync`; synchronous helpers still use `git`.
+- **`src/lib/sh.ts:gitAsync` swallows errors and resolves `null`.** Callers must
+  treat `null` as "unknown", never as "no". Scan reads and removal actions use
+  `gitAsync`.
 - **The bin is a symlink** when installed by npm, so `src/index.ts` compares
   `import.meta.url` against `realpathSync(process.argv[1])` before running `main()`.
 - **Removals append to** `~/.local/state/toupeira/operations.log` (`XDG_STATE_HOME`

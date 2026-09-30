@@ -6,7 +6,6 @@ import { basename, join } from 'node:path'
 import { parseWorktrees, remove } from '../index.js'
 import { harnessCwds } from '../lib/harnesses.js'
 import { mainRepoOf } from '../lib/repo.js'
-import { git } from '../lib/sh.js'
 import * as worktrees from '../lib/cleanups/worktrees.js'
 import { gitIn, gitAt, initRepo } from './helpers.js'
 
@@ -27,18 +26,15 @@ test('t3 code feeds its parked worktrees into the regular worktree cleanup', asy
   const home = mkdtempSync(join(tmpdir(), 'toupeira-home-'))
   const repoDir = mkdtempSync(join(tmpdir(), 'toupeira-t3repo-'))
   try {
-    const g = (a: string[]): string | null => git(a, repoDir)
-    g(['init', '-q', '-b', 'main'])
-    g(['config', 'user.email', 't@t'])
-    g(['config', 'user.name', 't'])
+    const g = initRepo(repoDir)
     writeFileSync(join(repoDir, 'a'), 'one\n')
-    g(['add', '.'])
-    g(['commit', '-qm', 'init'])
+    g('add', '.')
+    g('commit', '-qm', 'init')
 
     // the way t3 code parks an agent workspace: ~/.t3/worktrees/<repo>/<branch>
     const wt = join(home, '.t3/worktrees', basename(repoDir), 'feature-x')
     mkdirSync(wt, { recursive: true })
-    g(['worktree', 'add', wt, '-b', 'feature-x', 'main'])
+    g('worktree', 'add', wt, '-b', 'feature-x', 'main')
 
     assert.equal(harnessCwds(home).has(wt), true, 'the parked workspace counts as a recorded working directory')
     assert.equal(realpathSync((await mainRepoOf(wt))!), realpathSync(repoDir), 'it resolves to its main repository like any worktree')

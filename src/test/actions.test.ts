@@ -158,6 +158,26 @@ test('command actions share one serial lane', async () => {
   assert.deepEqual(events, ['start:/command/one', 'end:/command/one', 'start:/command/two', 'end:/command/two'])
 })
 
+test('command lane waits for every non-command removal to settle', async () => {
+  const command = item({ kind: 'command', cmd: ['pnpm', 'store', 'prune'] }, { path: '/command/prune' })
+  const filesystem = item({ kind: 'rm', guard: '/tmp/' }, { path: '/tmp/node_modules' })
+  const git = item({ kind: 'branch-delete', repo: '/repo', branch: 'old' }, { path: '/repo' })
+  const nonCommandPaths = new Set([filesystem.path, git.path])
+  const settled = new Set<string>()
+  let commandStartedAfterSettled = false
+
+  await removeAll([command, filesystem, git], () => {}, async (candidate) => {
+    if (candidate.action.kind === 'command') {
+      commandStartedAfterSettled = [...nonCommandPaths].every((path) => settled.has(path))
+    }
+    await delay(10)
+    if (candidate.action.kind !== 'command') settled.add(candidate.path)
+    return true
+  })
+
+  assert.equal(commandStartedAfterSettled, true, 'commands wait for every filesystem and git item')
+})
+
 test('a refused item fails without stopping other selected removals', async () => {
   const home = mkdtempSync(join(tmpdir(), 'toupeira-actions-'))
   try {

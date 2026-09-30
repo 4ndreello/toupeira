@@ -177,9 +177,12 @@ export async function removeAll(
     if (lane) lane.push(item);
     else byLane.set(key, [item]);
   }
+  // store prunes run last so they see node_modules removed by the other lanes
+  const commandLane = byLane.get("command");
+  byLane.delete("command");
   lanes.push(...byLane.values());
 
-  await Promise.all(lanes.map(async (lane) => {
+  const runLane = async (lane: Item[]): Promise<void> => {
     for (const item of lane) {
       let result: RemoveResult;
       try {
@@ -192,5 +195,8 @@ export async function removeAll(
       }
       onResult(result);
     }
-  }));
+  };
+
+  await Promise.all(lanes.map(runLane));
+  if (commandLane) await runLane(commandLane);
 }

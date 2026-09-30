@@ -4,11 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scan } from '../lib/scan.js'
-import { git, limited } from '../lib/sh.js'
+import { gitAsync, limited } from '../lib/sh.js'
 import { count, resetCounts, timed } from '../lib/profile.js'
 import * as branches from '../lib/cleanups/branches.js'
 import * as worktrees from '../lib/cleanups/worktrees.js'
-import { gitIn, initRepo } from './helpers.js'
+import { initRepo } from './helpers.js'
 
 test('the shared limiter overlaps work, caps concurrency and releases rejected tasks', { skip: availableParallelism() < 2 }, async () => {
   const limit = availableParallelism()
@@ -129,7 +129,7 @@ test('concurrent cleanups share per-repo promises from their ctx cache', async (
   }
 })
 
-test('profile: verbose logs every git call', () => {
+test('profile: verbose logs every git call', async () => {
   const realEnv = process.env['TOUPEIRA_PROFILE']
   const realWrite = process.stderr.write
   let out = ''
@@ -137,7 +137,7 @@ test('profile: verbose logs every git call', () => {
   try {
     process.env['TOUPEIRA_PROFILE'] = 'verbose'
     resetCounts()
-    assert.match(git(['--version'], tmpdir()) ?? '', /git version/, 'the call itself still works')
+    assert.match(await gitAsync(['--version'], tmpdir()) ?? '', /git version/, 'the call itself still works')
     assert.match(out, /prof git --version/, 'verbose names the exact argv forked')
   } finally {
     process.stderr.write = realWrite

@@ -22,26 +22,15 @@ export async function limited<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export function git(args: string[], cwd: string): string | null {
-  // counted always, printed per call only at verbose: a squash-merge check forks
-  // five times per branch, which is exactly what that line makes visible
-  count("git");
-  if (verboseProfile()) process.stderr.write(`prof git ${args.join(" ")}\n`);
-  try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64e6 }).trim();
-  } catch {
-    return null;
-  }
-}
-
 export function gitAsync(args: string[], cwd: string): Promise<string | null> {
   return limited(() => new Promise((resolve) => {
     count("git");
     if (verboseProfile()) process.stderr.write(`prof git ${args.join(" ")}\n`);
     try {
-      execFile("git", args, { cwd, encoding: "utf8", maxBuffer: 64e6 }, (error, stdout) => {
+      const child = execFile("git", args, { cwd, encoding: "utf8", maxBuffer: 64e6 }, (error, stdout) => {
         resolve(error ? null : stdout.trim());
       });
+      child.stdin?.end();
     } catch {
       resolve(null);
     }
