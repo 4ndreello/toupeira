@@ -119,3 +119,95 @@ test('orphan sessions are offered only when the project they encode is really go
     rmSync(live, { recursive: true, force: true })
   }
 })
+
+type ReadCall = { length: number; buffer: unknown }
+
+async function withReadSyncSpy(run: (calls: ReadCall[]) => void): Promise<void> {
+  const { createRequire, syncBuiltinESMExports } = await import('node:module')
+  const fs = createRequire(import.meta.url)('node:fs') as typeof import('node:fs')
+  const original = fs.readSync
+  const calls: ReadCall[] = []
+  const wrapped = ((fd: number, buffer: NodeJS.ArrayBufferView, offset: number, length: number, position: number | null) => {
+    calls.push({ length, buffer })
+    return original(fd, buffer, offset, length, position)
+  }) as typeof fs.readSync
+  Reflect.set(fs, 'readSync', wrapped)
+  syncBuiltinESMExports()
+  try {
+    run(calls)
+  } finally {
+    Reflect.set(fs, 'readSync', original)
+    syncBuiltinESMExports()
+  }
+}
+
+test('headMatch reads only 4 KB to find a match in the first chunk (R15)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-head-'))
+  try {
+    writeAt(home, 'header.jsonl', '{"cwd":"/tmp/early"}\n')
+    writeAt(home, 'long.jsonl', `{"cwd":"/tmp/early-long"}\n${'x'.repeat(5000)}`)
+    const { CWD_RE, headMatch } = await import('../lib/sessions.js')
+    await withReadSyncSpy((calls) => {
+      assert.equal(headMatch(join(home, 'header.jsonl'), CWD_RE), '/tmp/early')
+      assert.equal(headMatch(join(home, 'long.jsonl'), CWD_RE), '/tmp/early-long')
+      assert.deepEqual(calls.map((call) => call.length), [4 * 1024, 4 * 1024])
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('headMatch continues past 4 KB to find a padded header (R16)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-head-'))
+  const bytes = 256 * 1024
+  try {
+    writeAt(home, 'header.jsonl', `${' '.repeat(5000)}{"cwd":"/tmp/late-header"}\n`)
+    writeAt(home, 'edge.jsonl', `${' '.repeat(4080)}{"cwd":"/tmp/edge"}\n`)
+    const { CWD_RE, headMatch } = await import('../lib/sessions.js')
+    await withReadSyncSpy((calls) => {
+      assert.equal(headMatch(join(home, 'header.jsonl'), CWD_RE), '/tmp/late-header')
+      assert.equal(headMatch(join(home, 'edge.jsonl'), CWD_RE), '/tmp/edge')
+      assert.deepEqual(calls.map((call) => call.length), [4 * 1024, bytes - 4 * 1024, 4 * 1024, bytes - 4 * 1024])
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('headMatch does not match a cwd beyond the byte limit (R17)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-head-'))
+  const bytes = 8 * 1024
+  try {
+    writeAt(home, 'header.jsonl', `${' '.repeat(bytes)}{"cwd":"/tmp/beyond-limit"}\n`)
+    writeAt(home, 'short.jsonl', '{"other":"no cwd"}\n')
+    const { CWD_RE, headMatch } = await import('../lib/sessions.js')
+    await withReadSyncSpy((calls) => {
+      assert.equal(headMatch(join(home, 'header.jsonl'), CWD_RE, bytes), null)
+      assert.equal(headMatch(join(home, 'short.jsonl'), CWD_RE, bytes), null)
+      assert.deepEqual(calls.map((call) => call.length), [4 * 1024, bytes - 4 * 1024, 4 * 1024])
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('headMatch reuses its scratch buffer and grows only past its size (R18)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-head-'))
+  const bytes = 256 * 1024
+  try {
+    writeAt(home, 'header.jsonl', '{"cwd":"/tmp/reused"}\n')
+    const { CWD_RE, headMatch } = await import('../lib/sessions.js')
+    await withReadSyncSpy((calls) => {
+      const file = join(home, 'header.jsonl')
+      assert.equal(headMatch(file, CWD_RE), '/tmp/reused')
+      assert.equal(headMatch(file, CWD_RE), '/tmp/reused')
+      assert.equal(headMatch(file, CWD_RE, bytes + 1), '/tmp/reused')
+      assert.strictEqual(calls[0]!.buffer, calls[1]!.buffer)
+      assert.equal((calls[0]!.buffer as Buffer).byteLength, bytes)
+      assert.notStrictEqual(calls[0]!.buffer, calls[2]!.buffer)
+      assert.equal((calls[2]!.buffer as Buffer).byteLength, bytes + 1)
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
