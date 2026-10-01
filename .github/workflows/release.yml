@@ -23,11 +23,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      # no registry-url: that writes an .npmrc expecting NODE_AUTH_TOKEN, and the
-      # default registry is already npmjs
+      # trusted publishing needs npm 11.5.1 or later, which node bundles from 24.5.0 on,
+      # so the range buys the right npm without installing one over it. no registry-url:
+      # that writes an .npmrc expecting NODE_AUTH_TOKEN, and npmjs is already the default
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ^24.5.0
       - name: what is left to release
         id: state
         run: |
@@ -43,9 +44,6 @@ jobs:
           fi
       - if: steps.state.outputs.published != 'true'
         run: npm ci --no-audit --no-fund --ignore-scripts
-      # trusted publishing needs npm 11.5.1 or later, newer than some node 24 builds ship
-      - if: steps.state.outputs.published != 'true'
-        run: npm install -g npm@^11.5.1
       # prepublishOnly runs npm test, so what goes out is what was just built and tested
       - if: steps.state.outputs.published != 'true'
         run: npm publish
