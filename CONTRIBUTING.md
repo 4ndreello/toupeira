@@ -52,13 +52,9 @@ Then the checklist, all three checked before the PR leaves draft:
 
 Docs-only pull requests (`.md`, `.github`, `.gitignore`) are exempt from the
 version bump. Anything that changes shipped code must bump `version` in
-`package.json`, or the `version` job fails. After the merge, the release is a tag
-plus generated notes:
-
-```bash
-git tag "v$(node -p "require('./package.json').version")" && git push --tags
-gh release create "v$(node -p "require('./package.json').version")" --generate-notes
-```
+`package.json`, or the `version` job fails. The merge itself releases: the
+`release` workflow publishes the new version to npm and creates the GitHub
+release with generated notes.
 
 ## The rules this project holds to
 
@@ -101,5 +97,5 @@ separate commits.
 ## Releasing
 
 For maintainers: move the entries under `## [Unreleased]` in `CHANGELOG.md` into
-a section for the new version before bumping, then tag as above. The tag is what
-cuts the release.
+a section for the new version before bumping. Merging to `main` cuts the
+release; there is no tag to push by hand.

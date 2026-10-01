@@ -184,13 +184,17 @@ README — the README is the npm page and stays user-facing.
 ## Releasing
 
 Every pull request that changes shipped code bumps `version` in `package.json` —
-the `version` job in CI fails otherwise (docs-only PRs are exempt). After the
-merge, the version on `main` is tagged and released:
+the `version` job in CI fails otherwise (docs-only PRs are exempt). The merge is
+the release: `.github/workflows/release.yml` runs on every push to `main`, and when
+the version in `package.json` is not on npm yet it runs `npm publish` (which runs
+`npm test` through `prepublishOnly`) and then `gh release create v<version>
+--generate-notes`, which also makes the tag. Nothing is published by hand.
 
-```bash
-git tag "v$(node -p "require('./package.json').version")" && git push --tags
-gh release create "v$(node -p "require('./package.json').version")" --generate-notes
-```
+Publishing uses npm trusted publishing (OIDC), not a token: the package settings on
+npmjs.com name this repo and `release.yml` as its trusted publisher, and the job's
+`id-token: write` is the whole credential. Renaming the workflow file breaks
+publishing until the npm side is updated to match. Each step checks its own side
+(the version on npm, the tag on GitHub), so a failed run is fixed by re-running it.
 
 ## Testing style
 

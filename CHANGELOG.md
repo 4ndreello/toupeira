@@ -6,6 +6,8 @@ Notable changes to this project. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-01
+
 ### Changed
 
 - Local branches are offered once their content is in the default branch,
@@ -22,4 +24,5 @@ Notable changes to this project. The format follows
   upstream.
 - Branch names containing `+` can be deleted.
 
-[Unreleased]: https://github.com/4ndreello/toupeira/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/4ndreello/toupeira/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/4ndreello/toupeira/releases/tag/v0.8.0

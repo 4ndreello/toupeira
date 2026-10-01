@@ -1,0 +1,54 @@
+name: release
+
+# a merge to main is the release. every pull request that ships code already bumps
+# package.json (the version job in ci.yml fails otherwise), so a version that is not
+# on npm yet is one waiting to go out. a docs-only merge keeps the version and does
+# nothing here
+on:
+  push:
+    branches: [main]
+
+# two quick merges must not race on the same version
+concurrency: release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # gh release create makes the tag and the release
+      contents: write
+      # npm trusted publishing: npm checks that this workflow, in this repo, is the
+      # one asking, so there is no NPM_TOKEN to store, rotate or leak, and the
+      # provenance attestation comes with it
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # trusted publishing needs npm 11.5.1 or later, which node bundles from 24.5.0 on,
+      # so the range buys the right npm without installing one over it. no registry-url:
+      # that writes an .npmrc expecting NODE_AUTH_TOKEN, and npmjs is already the default
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ^24.5.0
+      - name: what is left to release
+        id: state
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          # npm and the tag are checked apart, so a run that published and then failed
+          # before the release finishes the job on a re-run instead of failing on npm
+          if [ "$(npm view "toupeira@$v" version 2>/dev/null)" = "$v" ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.state.outputs.published != 'true'
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      # prepublishOnly runs npm test, so what goes out is what was just built and tested
+      - if: steps.state.outputs.published != 'true'
+        run: npm publish
+      - if: steps.state.outputs.tagged != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.version }}
+        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
