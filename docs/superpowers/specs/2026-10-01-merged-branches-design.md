@@ -137,12 +137,12 @@ To poke at it by hand:
 
 ```bash
 npm run build
-node dist/test/minefield.js /tmp/field
-HOME=/tmp/field node dist/index.js clean --root /tmp/field/minefield --root /tmp/field/no-default
+node dist/test/minefield.js   # builds in a fresh temp dir, prints the scan command
 ```
 
-The fake `HOME` keeps the real agent state out of the scan and the operations log
-inside the field.
+The printed command sets a fake `HOME`, which keeps the real agent state out of the
+scan, and `XDG_STATE_HOME`, which keeps the operations log inside the field: the log
+honors `XDG_STATE_HOME` before `HOME`.
 
 ## Found while implementing
 

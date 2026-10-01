@@ -203,7 +203,7 @@ that need agent state build a fake `HOME` under `mkdtempSync` and pass it in —
 `execFileSync`-ing real `git` into a temp repo. Keep new tests in the file of their
 domain and the same style. `src/test/minefield.ts` is the one shared fixture: every
 branch a cleaner could be tempted by, tagged keep or go, and
-`node dist/test/minefield.js <dir>` lays it out on disk to scan by hand.
+`node dist/test/minefield.js` lays it out in a fresh temp dir to scan by hand.
 
 ## Conventions
 

@@ -1,4 +1,5 @@
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ageRefs, gitAt } from './helpers.js'
@@ -181,17 +182,15 @@ export function buildMinefield(root: string, now: number = Date.now()): Minefiel
   return { repos: [repo, orphan], keep, go }
 }
 
-// node dist/test/minefield.js <dir> lays the field out on disk to poke at by hand
+// node dist/test/minefield.js lays the field out on disk to poke at by hand. it always
+// builds in a fresh temp dir it made itself, never in a path it was handed, so it cannot
+// write into a directory that already holds something
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  const root = process.argv[2]
-  if (!root) {
-    console.error('usage: node dist/test/minefield.js <empty dir>')
-    process.exit(1)
-  }
-  mkdirSync(root, { recursive: true })
-  const field = buildMinefield(realpathSync(root))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'toupeira-minefield-')))
+  const field = buildMinefield(root)
   const roots = field.repos.map((r) => `--root ${r}`).join(' ')
   console.log(`keep:\n${field.keep.map((m) => `  ${m.branch}  ${m.why}`).join('\n')}`)
   console.log(`go:\n${field.go.map((m) => `  ${m.branch}  ${m.why}`).join('\n')}`)
-  console.log(`\nHOME=${root} node dist/index.js scan ${roots}`)
+  // XDG_STATE_HOME wins over HOME for the operations log, so both point into the field
+  console.log(`\nHOME=${root} XDG_STATE_HOME=${root}/.local/state node dist/index.js scan ${roots}`)
 }
