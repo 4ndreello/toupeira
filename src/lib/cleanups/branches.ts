@@ -1,10 +1,12 @@
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { DAY, short } from "../format.js";
-import { cachedBranchRefs, cachedDefaultBranch, cachedMerged, cachedRemotes, cachedWorktrees, isContentMerged, parseWorktrees } from "../repo.js";
+import { cachedBranchRefs, cachedCommonDir, cachedDefaultBranch, cachedMerged, cachedRemotes, cachedWorktrees, isContentMerged, parseWorktrees } from "../repo.js";
 import type { BranchRef } from "../repo.js";
 import type { Ctx, CollectResult, Item } from "../../types.js";
 
 export const cats: Record<string, string> = {
-  "branch-gone": "local branches fully absorbed elsewhere",
+  "branch-merged": "local branches already in the default branch",
 };
 
 // defaultBranch answers with whatever origin head points at, that is origin main, which
@@ -16,9 +18,10 @@ function localName(remotes: string[], base: string): string {
   return hit ? base.slice(hit.length + 1) : base;
 }
 
-// the graveyard: a branch whose patch is already upstream (squash included) and whose
-// remote side is gone has nothing left to protect. checked out, unmerged, young or
-// still published branches never reach here.
+// the graveyard: a branch whose patch is already in the default branch (squash included)
+// has nothing left to protect, whatever its upstream says. the upstream was only ever a
+// proxy for "these commits exist elsewhere", and merged content is the direct evidence.
+// checked out, rebasing, unmerged or recently moved branches never reach here.
 export async function collect(ctx: Partial<Ctx>): Promise<CollectResult> {
   const { repos = new Set<string>(), days = 7, now = Date.now(), onProgress = () => {} } = ctx;
   let completed = 0;
@@ -37,50 +40,83 @@ async function collectRepo(
   now: number,
   onProgress: (msg: string) => void,
 ): Promise<CollectResult> {
-  const [base, remotes, worktreeList, refs] = await Promise.all([
+  const [base, remotes, worktreeList, refs, common] = await Promise.all([
     cachedDefaultBranch(ctx, repo),
     cachedRemotes(ctx, repo),
     cachedWorktrees(ctx, repo),
     cachedBranchRefs(ctx, repo),
+    cachedCommonDir(ctx, repo),
   ]);
-  if (!base) return { items: [] };
+  if (!base || !common) return { items: [] };
   const localBase = localName(remotes, base);
-  const busy = new Set(parseWorktrees(worktreeList).map((worktree) => worktree.branch));
-  const candidates = refs.filter((ref) => eligible(ref, base, localBase, busy, days, now));
-  const gone = candidates.filter(hasGoneUpstream);
-  if (!gone.length) return { items: [] };
+  const busy = new Set([...parseWorktrees(worktreeList).map((worktree) => worktree.branch), ...rebasing(common)]);
+  const candidates = refs
+    .map((ref) => ({ ref, age: refAge(common, ref, now) }))
+    .filter(({ ref, age }) => eligible(ref, age, base, localBase, busy, days));
+  if (!candidates.length) return { items: [] };
   const merged = await cachedMerged(ctx, repo, base);
   let completed = 0;
-  const results = await Promise.all(gone.map(async (ref) => {
-    const item = await collectCandidate(ctx, repo, ref, base, merged, now);
-    onProgress(`branches ${short(repo)} ${++completed}/${gone.length}`);
+  const results = await Promise.all(candidates.map(async ({ ref, age }) => {
+    const item = await collectCandidate(ctx, repo, ref, age, base, merged);
+    onProgress(`branches ${short(repo)} ${++completed}/${candidates.length}`);
     return item;
   }));
   return { items: results.filter((item): item is Item => item !== null) };
 }
 
-function eligible(ref: BranchRef, base: string, localBase: string, busy: Set<string | null>, days: number, now: number): boolean {
-  const timestamp = Number(ref.timestamp) * 1000;
-  const age = timestamp ? Math.floor((now - timestamp) / DAY) : 0;
-  return Boolean(ref.branch && timestamp && ref.branch !== base && ref.branch !== localBase && !busy.has(ref.branch) && age >= days);
+function eligible(ref: BranchRef, age: number | null, base: string, localBase: string, busy: Set<string | null>, days: number): boolean {
+  return Boolean(ref.branch && age !== null && ref.branch !== base && ref.branch !== localBase && !busy.has(ref.branch) && age >= days);
 }
 
-function hasGoneUpstream(ref: BranchRef): boolean {
-  return Boolean(ref.upstream && ref.remoteref.startsWith("refs/heads/") && ref.track === "[gone]");
+// age is when the ref last moved, not when its tip was committed: a branch made from
+// main a minute ago carries main's tip date and would look as old as main's last commit.
+// the reflog is touched on every update; without one, the tip date is all there is.
+function refAge(common: string, ref: BranchRef, now: number): number | null {
+  let moved: number;
+  try {
+    moved = statSync(join(common, "logs/refs/heads", ref.branch)).mtimeMs;
+  } catch {
+    moved = Number(ref.timestamp) * 1000;
+  }
+  return moved ? Math.floor((now - moved) / DAY) : null;
+}
+
+// a worktree mid-rebase lists as detached, so the branch it is rebasing looks free. git
+// would refuse the delete, but the picker should not offer a row that can only fail.
+// the branch is named in head-name, under the common dir for the main checkout and
+// under worktrees/<id> for each linked one.
+function rebasing(common: string): string[] {
+  let linked: string[];
+  try {
+    linked = readdirSync(join(common, "worktrees")).map((id) => join(common, "worktrees", id));
+  } catch {
+    linked = [];
+  }
+  return [common, ...linked].flatMap((gitdir) => ["rebase-merge", "rebase-apply"].flatMap((dir) => {
+    try {
+      return [readFileSync(join(gitdir, dir, "head-name"), "utf8").trim().replace(/^refs\/heads\//, "")];
+    } catch {
+      return [];
+    }
+  }));
+}
+
+function upstreamNote(ref: BranchRef): string {
+  if (!ref.upstream) return "never pushed";
+  return ref.track === "[gone]" ? `${ref.upstream} deleted` : `tracks ${ref.upstream}`;
 }
 
 async function collectCandidate(
   ctx: Partial<Ctx>,
   repo: string,
   ref: BranchRef,
+  age: number | null,
   base: string,
   merged: Set<string>,
-  now: number,
 ): Promise<Item | null> {
   if (!await isContentMerged(repo, ref.branch, base, merged, ctx)) return null;
-  const age = Math.floor((now - Number(ref.timestamp) * 1000) / DAY);
   return {
-    cat: "branch-gone",
+    cat: "branch-merged",
     repo,
     // display and dedupe only: nothing on disk is removed, the target is a ref, and
     // branch delete declares frees false so this path is never measured either
@@ -90,7 +126,7 @@ async function collectCandidate(
     label: `${repo}#${ref.branch}`,
     size: 0,
     safe: true,
-    note: `${ref.branch} (${age}d), merged into ${base}, ${ref.upstream} deleted`,
+    note: `${ref.branch} (${age}d), merged into ${base}, ${upstreamNote(ref)}`,
     action: { kind: "branch-delete", repo, branch: ref.branch },
   };
 }

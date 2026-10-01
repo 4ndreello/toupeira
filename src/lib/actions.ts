@@ -9,11 +9,14 @@ import type { Item } from "../types.js";
 //          is already covered and gets deduped away by scan()
 //   frees  false when the target is not a path at all (a ref, a tool own prune), so
 //          scan() measures nothing for it, see targets()
+//   weightless  what goes is known but weighs nothing on disk (a ref), so scan() lists
+//          it at 0 B instead of hiding it with the unmeasurable prunes
 //   run    performs the removal, returns whether it happened
 
 interface ActionDef {
   tree: boolean;
   frees?: boolean;
+  weightless?: boolean;
   run: (item: Item, removeFile?: FileRm) => Promise<boolean>;
 }
 
@@ -82,6 +85,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   "branch-delete": {
     tree: false,
     frees: false,
+    weightless: true,
     run: async ({ action }) => action.kind === "branch-delete" && (await gitAsync(["branch", "-D", action.branch], action.repo)) !== null,
   },
   // runs one exact argv list, never through a shell, the cleanup tables are the only
@@ -117,7 +121,7 @@ export async function remove(item: Item): Promise<boolean> {
     const branch: unknown = item.action.branch;
     const ok =
       typeof branch === "string" &&
-      /^[A-Za-z0-9._/-]+$/.test(branch) &&
+      /^[A-Za-z0-9._/+-]+$/.test(branch) &&
       !branch.startsWith("-") &&
       !branch.includes("..") &&
       !branch.endsWith(".lock") &&

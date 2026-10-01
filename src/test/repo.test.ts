@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isContentMerged, mergedBranches, unpushed } from '../lib/repo.js'
+import { cachedBranchRefs, isContentMerged, mergedBranches, unpushed } from '../lib/repo.js'
 import { gitAsync } from '../lib/sh.js'
 import { gitIn, initRepo, sorted } from './helpers.js'
 
@@ -213,5 +213,23 @@ test('unpushed reads ahead state from one memoized refs listing', async () => {
     if (realEnv === undefined) delete process.env['TOUPEIRA_PROFILE']
     else process.env['TOUPEIRA_PROFILE'] = realEnv
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// the listing ends in tabs for a branch with no upstream, and gitAsync trims the output:
+// the last such branch used to fall out of the listing, so no rule could ever see it
+test('the refs listing keeps a last branch that has no upstream', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-refs-'))
+  try {
+    const g = initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'a\n')
+    g('add', 'a')
+    g('commit', '-qm', 'init')
+    g('branch', 'zz-last')
+    const refs = await cachedBranchRefs({}, dir)
+    assert.deepEqual(refs.map((ref) => ref.branch), ['main', 'zz-last'])
+    assert.deepEqual(refs[1], { branch: 'zz-last', timestamp: refs[0]!.timestamp, upstream: '', track: '', remoteref: '', ahead: null })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })

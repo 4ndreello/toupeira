@@ -95,7 +95,7 @@ Every cleanup emits the same object; the ui and actions know nothing else:
 `span` is optional: a labelled age range the picker prints as its own column (only
 `transcript-old` has one; the gutter stays blank for the rest). `label` is optional
 too: what the picker, the success line and the log print in place of `path`, for a
-category whose target is not a path (`branch-gone` sets `<repo>#<branch>`, so every
+category whose target is not a path (`branch-merged` sets `<repo>#<branch>`, so every
 branch of one repo does not print the same row). `safe` is what `--yes` and the
 picker's initial selection use. `cat` keys into `CATS`, merged from each cleanup's
 exported `cats` — the picker and summary read labels from there, so adding a
@@ -128,10 +128,21 @@ README — the README is the npm page and stays user-facing.
   local branch name. Anything comparing a local name against it has to strip the
   remote first (`src/lib/cleanups/branches.ts:localName`), or the default branch becomes a candidate
   for `git branch -D`.
-- **`branch-gone` needs a deleted upstream, not a missing one.** The evidence is a
-  tracking config whose remote ref is gone. No config at all is no evidence — that
-  branch may hold the only copy of its commits — so it is skipped, and nothing in
-  this category is ever labelled from push state that was never checked.
+- **`branch-merged` takes merged content as the evidence, not the upstream.** A
+  branch whose patch is already in the default branch holds no only copy of
+  anything, pushed or not; the upstream state only shapes the `note`. Two things
+  still hold a merged branch back. Age is when the ref last *moved* (its reflog
+  mtime), not its tip date: a branch made from main a minute ago carries main's
+  tip date. And a worktree mid-rebase lists as `detached`, so the branch it is
+  rebasing is read from `rebase-merge/head-name` and joins the busy set. The
+  `src/test/minefield.ts` fixture is the contract: any rule change keeps its
+  `keep` list unoffered and untouched.
+- **A ref weighs 0 B and is still listed.** `scan()` hides zero-byte items (a tool
+  prune whose effect it cannot measure), except actions declared `weightless`,
+  which is only `branch-delete`. Branch rows add nothing to the reclaimable total.
+- **The last ref of the listing loses its empty fields.** `gitAsync` trims its
+  output, so a last branch with no upstream arrives with two tab fields, not five.
+  `cachedBranchRefs` accepts 2 to 5; requiring exactly 5 silently dropped it.
 - **A non-concrete toolchain default protects everything.** nvm writes whatever the
   user typed (`lts/*`, `node`, a named alias). `src/lib/cleanups/toolchains.ts:defaultPins` follows
   alias files a few hops; a target that never becomes a version means the daily
@@ -160,8 +171,8 @@ README — the README is the npm page and stays user-facing.
   the action is `tree: false`, and `remove()` refuses the item unless every file is
   a `.jsonl` under `action.root`. Never give this category a `rm` action.
 - **Never touched:** the main checkout, a bare worktree, a dirty worktree, one with
-  unpushed commits, or a branch with no upstream (`unpushed()` returns `null` =
-  unknown = keep).
+  unpushed commits, or an unmerged branch with no upstream (`unpushed()` returns
+  `null` = unknown = keep).
 - **`src/lib/sh.ts:gitAsync` swallows errors and resolves `null`.** Callers must
   treat `null` as "unknown", never as "no". Scan reads and removal actions use
   `gitAsync`.
@@ -190,7 +201,9 @@ Each file is a separate node process, so the suite runs in parallel. Tests
 that need agent state build a fake `HOME` under `mkdtempSync` and pass it in — every
 `home`-taking function exists so this stays possible. Git behavior is tested by
 `execFileSync`-ing real `git` into a temp repo. Keep new tests in the file of their
-domain and the same style.
+domain and the same style. `src/test/minefield.ts` is the one shared fixture: every
+branch a cleaner could be tempted by, tagged keep or go, and
+`node dist/test/minefield.js` lays it out in a fresh temp dir to scan by hand.
 
 ## Conventions
 

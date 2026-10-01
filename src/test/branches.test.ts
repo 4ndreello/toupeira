@@ -1,13 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { remove } from '../index.js'
 import { dedupe, targets } from '../lib/scan.js'
 import * as branches from '../lib/cleanups/branches.js'
 import type { Item } from '../types.js'
-import { gitIn, gitAt, actionBranch, sorted } from './helpers.js'
+import { ageRefs, gitIn, gitAt, actionBranch, sorted } from './helpers.js'
+import { buildMinefield } from './minefield.js'
 
 // builds a repo with one branch of each kind the graveyard must tell apart
 function graveyardRepo() {
@@ -27,7 +28,7 @@ function graveyardRepo() {
   return { dir, g, commit }
 }
 
-test('the graveyard offers merged branches whose remote side is gone, and only those', async () => {
+test('the graveyard offers every branch already in main, pushed or not', async () => {
   const { dir, g, commit } = graveyardRepo()
   try {
     // squash-merged, pushed, then deleted on the remote
@@ -44,7 +45,7 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
     // same content as `gone`, but never pushed anywhere
     g('branch', 'local-only', 'gone')
 
-    // merged but fresh: the age filter holds it back
+    // merged, and its tip is old, but the ref was made just now: the age filter holds it back
     g('branch', 'fresh', 'main')
 
     // old but unmerged: unique work still lives here
@@ -55,13 +56,16 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
     // old and merged, but checked out in a worktree
     g('branch', 'old-wt', 'gone')
     g('worktree', 'add', join(dir, 'wt'), 'old-wt')
+    ageRefs(dir, Date.now() - 40 * 86400e3, ['fresh'])
 
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
-    assert.deepEqual(sorted(by.keys()), ['gone'], 'only the branch whose remote side is gone surfaces')
-    assert.equal(by.get('gone')!.safe, true, 'a deleted upstream is proven gone')
+    assert.deepEqual(sorted(by.keys()), ['gone', 'local-only'], 'merged content is the evidence, the upstream is not')
+    assert.equal(by.get('gone')!.safe, true, 'content in main loses nothing')
+    assert.equal(by.get('local-only')!.safe, true, 'never pushed, but its patch is already in main')
     assert.match(by.get('gone')!.note, /merged into main/)
     assert.match(by.get('gone')!.note, /origin\/gone deleted/)
+    assert.match(by.get('local-only')!.note, /never pushed/)
     for (const i of items) {
       assert.equal(i.path, dir, 'the item points at the repo, display only')
       assert.equal(i.label, `${dir}#${actionBranch(i)}`, 'the label names the ref that goes')
@@ -71,22 +75,21 @@ test('the graveyard offers merged branches whose remote side is gone, and only t
 
     await remove(by.get('gone')!)
     assert.equal(g('branch', '--list', 'gone'), '', 'remove() really deletes the branch')
-    assert.match(g('branch', '--list', 'local-only'), /local-only/, 'a never-pushed branch stays, absorbed or not')
+    assert.match(g('branch', '--list', 'open'), /open/, 'unmerged work stays')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-// the upstream reading comes from the same for-each-ref fork as the listing:
-// gone (even slashed or never-fetched) surfaces, synced, local and tag
-// upstreams stay. a local upstream used to fail open via refs/remotes/./name.
-test('the graveyard reads gone state from the listing, three forks lighter', async () => {
+// the upstream reading comes from the same for-each-ref fork as the listing. it no longer
+// gates anything, merged content does, so all it decides is what the note says
+test('the upstream only shapes the note, merged content decides', async () => {
   const { dir, g, commit } = graveyardRepo()
   try {
     g('init', '--bare', '-q', join(dir, 'remote.git'))
     g('remote', 'add', 'origin', join(dir, 'remote.git'))
 
-    // pushed and still there: track is empty, stays
+    // pushed and still there, but unmerged: stays
     g('checkout', '-qb', 'synced')
     commit('s', 's\n', 'synced work')
     g('push', '-qu', 'origin', 'synced')
@@ -96,30 +99,31 @@ test('the graveyard reads gone state from the listing, three forks lighter', asy
     g('push', '-qu', 'origin', 'feat/vanished')
     g('update-ref', '-d', 'refs/remotes/origin/feat/vanished')
 
-    // tracking config hand-pointed at a ref that never existed: same evidence
-    // as a deletion under both readings, still offered
+    // tracking config hand-pointed at a ref that never existed: reads as deleted
     g('branch', 'ghost', 'main')
     g('config', 'branch.ghost.remote', 'origin')
     g('config', 'branch.ghost.merge', 'refs/heads/ghost')
 
-    // a local upstream always resolves: not gone, stays
+    // a local upstream always resolves: not gone
     g('branch', 'loc', 'main')
     g('config', 'branch.loc.remote', '.')
     g('config', 'branch.loc.merge', 'refs/heads/main')
 
-    // a tag is not a branch remote side: stays
+    // a tag is not a branch remote side, but the branch is still merged
     g('tag', 'v1', 'main')
     g('branch', 'tagged', 'main')
     g('config', 'branch.tagged.remote', 'origin')
     g('config', 'branch.tagged.merge', 'refs/tags/v1')
 
     g('checkout', '-q', 'main')
+    ageRefs(dir, Date.now() - 40 * 86400e3)
 
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     const by = new Map(items.map((i) => [actionBranch(i), i]))
-    assert.deepEqual(sorted(by.keys()), ['feat/vanished', 'ghost'], 'only gone remote sides surface')
-    assert.deepEqual(items.map(actionBranch), ['feat/vanished', 'ghost'], 'candidate output keeps ref listing order')
+    assert.deepEqual(items.map(actionBranch), ['feat/vanished', 'ghost', 'loc', 'tagged'], 'every merged branch, in ref listing order')
     assert.match(by.get('feat/vanished')!.note, /origin\/feat\/vanished deleted/, 'the note names the whole upstream short')
+    assert.match(by.get('ghost')!.note, /origin\/ghost deleted/)
+    assert.match(by.get('loc')!.note, /tracks /, 'a live upstream is named, not called deleted')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -141,6 +145,7 @@ test('a same-named tag cannot make an unmerged gone branch look safe', async () 
     g('fetch', '-q', '--prune', 'origin')
     g('checkout', '-q', 'main')
     g('tag', 'feature', 'main')
+    ageRefs(dir, Date.now() - 40 * 86400e3)
 
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
     assert.deepEqual(items.map(actionBranch), [], 'the unique commit keeps the branch out of the graveyard')
@@ -164,6 +169,7 @@ test('the default branch is never offered, whatever its tracking config says', a
     g('config', 'branch.main.remote', 'fork')
     g('branch', 'origin/main')
     g('checkout', '-qb', 'work')
+    ageRefs(dir, Date.now() - 40 * 86400e3)
 
     assert.equal(g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'remotes/origin/main', 'setup: a local branch makes the short remote name ambiguous')
     const { items } = await branches.collect({ repos: new Set<string>([dir]), days: 7, now: Date.now(), onProgress() {} })
@@ -180,6 +186,9 @@ test('branch-delete refuses anything that is not a plain branch name', async () 
       /refused, unsafe branch name/
     )
   }
+  // claude code names worktree branches after the worktree, + included: argv, not a shell
+  const plus = { cat: 't', repo: null, path: '/nowhere', size: 0, safe: true, note: 't', action: { kind: 'branch-delete', repo: '/nowhere', branch: 'worktree-feat+hints' } } as unknown as Item
+  assert.equal(await remove(plus), false, 'the guard lets it through, the missing repo fails it')
 })
 
 test('a branch item is not deduped away by tree items in its own repo', () => {
@@ -188,4 +197,40 @@ test('a branch item is not deduped away by tree items in its own repo', () => {
     { path: '/repo', action: { kind: 'branch-delete' } },
   ]
   assert.deepEqual(dedupe(items).map((i) => i.path), ['/repo/node_modules', '/repo'])
+})
+
+// the minefield is the safety contract for every branch rule, current or future: run the
+// scan, remove everything it offers, and no keep branch may have moved
+test('the minefield: nothing that must stay is offered, and cleaning everything leaves it', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'toupeira-mines-')))
+  try {
+    const field = buildMinefield(root)
+    const refs = (repo: string): string => gitIn(repo)('for-each-ref', 'refs/heads', '--format=%(refname:lstrip=2) %(objectname)')
+    const before = new Map(field.repos.map((repo) => [repo, refs(repo)]))
+    const { items } = await branches.collect({ repos: new Set(field.repos), days: 7, now: Date.now(), onProgress() {} })
+    const offered = field.keep
+      .filter((mine) => items.some((i) => i.repo === mine.repo && actionBranch(i) === mine.branch))
+      .map((mine) => `${mine.branch}: ${mine.why}`)
+    assert.deepEqual(offered, [], 'offered a branch that must stay')
+    for (const item of items) await remove(item)
+    const tip = (refs: string, branch: string) => refs.split('\n').find((l) => l.startsWith(`${branch} `))
+    const moved = field.keep
+      .filter((mine) => tip(refs(mine.repo), mine.branch) !== tip(before.get(mine.repo)!, mine.branch))
+      .map((mine) => `${mine.branch}: ${mine.why}`)
+    assert.deepEqual(moved, [], 'cleaning moved or deleted a branch that must stay')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the minefield: every branch already in main is offered', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'toupeira-mines-')))
+  try {
+    const field = buildMinefield(root)
+    const { items } = await branches.collect({ repos: new Set(field.repos), days: 7, now: Date.now(), onProgress() {} })
+    assert.deepEqual(sorted(items.map(actionBranch)), sorted(field.go.map((m) => m.branch)))
+    for (const item of items) assert.equal(item.safe, true, `${actionBranch(item)} has its content in main`)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

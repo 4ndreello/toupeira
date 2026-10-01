@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Item } from '../types.js'
 
@@ -53,3 +53,16 @@ export const actionCmd = (i: Item): string[] => (i.action as { cmd: string[] }).
 // the item was never produced by a real cleanup
 export const withFiles = (item: Item, files: string[]): Item =>
   ({ ...item, action: { ...item.action, files } }) as unknown as Item
+
+// branch age is when the ref last moved, read from its reflog: a fixture built a moment ago
+// has every ref moved just now, so a test that wants old branches says so here
+export const ageRefs = (repo: string, mtime: number, except: string[] = []): void => {
+  const walk = (dir: string, prefix: string): void => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name)
+      if (statSync(path).isDirectory()) walk(path, `${prefix}${name}/`)
+      else if (!except.includes(`${prefix}${name}`)) utimesSync(path, mtime / 1000, mtime / 1000)
+    }
+  }
+  walk(join(repo, '.git/logs/refs/heads'), '')
+}

@@ -63,9 +63,10 @@ export async function scan(
   for (const i of items) i.size = targets(i).reduce((s, p) => s + (sizes.get(p) ?? 0), 0);
 
   // only items with a positive measured target contribute to the reclaimable result. this
-  // keeps unmeasurable actions, such as a branch ref or a tool managed prune, out of the
-  // picker and out of yes.
-  const final = dedupe(items).filter((i) => i.size > 0);
+  // keeps unmeasurable actions, such as a tool managed prune, out of the picker and out of
+  // yes. a weightless action (a ref) is the exception: what it removes is known, it just
+  // weighs 0 B, and hiding it hid every branch the scan found.
+  const final = dedupe(items).filter((i) => i.size > 0 || ACTIONS[i.action.kind]?.weightless);
   final.sort((a, b) => b.size - a.size);
   reportCounts();
   return { items: final, kept, repos: repos.size };
