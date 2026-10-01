@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dedupe, scan } from '../lib/scan.js'
 import { resetCounts } from '../lib/profile.js'
 import { combinedSize, diskUsage } from '../lib/sh.js'
-import { writeAt, initRepo } from './helpers.js'
+import { ageRefs, writeAt, initRepo } from './helpers.js'
 
 test('an item inside a tree-removing item is dropped, but not under a prune', () => {
   const items = [
@@ -105,6 +105,27 @@ test('scan hides candidates with no measurable bytes', async () => {
     assert.equal(items[0]!.size, 1)
   } finally {
     rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// a ref weighs nothing, but what goes is known: the zero-byte filter that hides tool
+// prunes must not hide it, or no branch ever reaches the picker
+test('scan lists a merged branch at 0 B, outside the reclaimable bytes', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'toupeira-empty-'))
+  const dir = mkdtempSync(join(tmpdir(), 'toupeira-ref-'))
+  try {
+    const g = initRepo(dir)
+    writeFileSync(join(dir, 'a'), 'one\n')
+    g('add', 'a')
+    g('commit', '-qm', 'init')
+    g('branch', 'done')
+    ageRefs(dir, Date.now() - 30 * 86400e3)
+
+    const { items } = await scan({ days: 7, roots: [dir], home })
+    assert.deepEqual(items.map((i) => [i.cat, i.label, i.size]), [['branch-merged', `${dir}#done`, 0]])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { gitAsync } from "./sh.js";
 import type { Ctx } from "../types.js";
 
@@ -78,6 +78,16 @@ export const cachedMerged = (ctx: Partial<Ctx>, repo: string, base: string | nul
 export const cachedWorktrees = (ctx: Partial<Ctx>, repo: string): Promise<string> =>
   memo(ctx, `worktrees ${repo}`, async () => (await gitAsync(["worktree", "list", "--porcelain"], repo)) || "");
 
+// where refs, reflogs and in-progress rebases live, shared by every worktree of the repo.
+// mainRepoOf stripped /.git off the common dir to get repo, so that is where it almost
+// always is; only a .git file (a submodule, a separate git dir) costs the fork
+export const cachedCommonDir = (ctx: Partial<Ctx>, repo: string): Promise<string | null> =>
+  memo(ctx, `common dir ${repo}`, async () => {
+    const dotGit = join(repo, ".git");
+    if (statSync(dotGit, { throwIfNoEntry: false })?.isDirectory()) return dotGit;
+    return gitAsync(["rev-parse", "--path-format=absolute", "--git-common-dir"], repo);
+  });
+
 export const cachedRemotes = (ctx: Partial<Ctx>, repo: string): Promise<string[]> =>
   memo(ctx, `remotes ${repo}`, async () => ((await gitAsync(["remote"], repo)) || "").split("\n").filter(Boolean));
 
@@ -118,7 +128,9 @@ export const cachedBranchRefs = (ctx: Partial<Ctx>, repo: string): Promise<Branc
     if (!out) return [];
     return out.split("\n").flatMap((line) => {
       const fields = line.split("\t");
-      if (fields.length !== 5) return [];
+      // gitAsync trims the output, which strips the empty trailing fields of the last
+      // line: a last branch with no upstream arrives with two fields, not five
+      if (fields.length < 2 || fields.length > 5) return [];
       const [branch, timestamp, upstream, track, remoteref] = fields;
       if (!branch) return [];
       const upstreamName = upstream ?? "";

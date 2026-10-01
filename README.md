@@ -38,8 +38,9 @@ Node >= 20, no dependencies. Published as [`toupeira`](https://www.npmjs.com/pac
 ## The scan
 
 `scan` answers how much and roughly where, in a fixed handful of lines. It only
-lists candidates whose measured targets are larger than 0 B. The per-item detail
-lives in the picker:
+lists candidates whose measured targets are larger than 0 B, plus merged local
+branches, which weigh nothing but pile up all the same. The per-item detail lives
+in the picker:
 
 ```
 20 repo(s) · 273 item(s) · 5.1 GB reclaimable
@@ -53,9 +54,9 @@ lives in the picker:
   6 held back, not removable — `toupeira clean` shows why
 ```
 
-Maintenance-only candidates, such as stale worktree registrations, deleted
-branches and package-store pruning, are omitted when toupeira cannot measure
-any bytes to reclaim.
+Maintenance-only candidates, such as stale worktree registrations and
+package-store pruning, are omitted when toupeira cannot measure any bytes to
+reclaim.
 
 ## The picker
 
@@ -132,7 +133,9 @@ The same scan reports developer junk no agent wrote, but every machine grows:
 - your main checkout, ever
 - a worktree with uncommitted changes
 - a worktree holding commits you never pushed
-- a branch with no upstream, where the commits exist nowhere else
+- a branch whose commits are not in your default branch yet, pushed or not
+- a branch checked out, or being rebased, in any worktree
+- a branch created or moved within `--days`, even one with no commits of its own
 - your default branch, whatever its tracking config says
 - the newest toolchain version, or the one your version manager calls default — and
   no version at all when that default names a moving target like `lts/*` or `node`,
@@ -150,8 +153,10 @@ The same scan reports developer junk no agent wrote, but every machine grows:
 different hash, so git swears the branch is unmerged. toupeira replays the
 branch as one commit on its merge base and asks `git cherry` whether that patch
 is already upstream, so squash-merged worktrees are correctly identified as
-merged. Branch refs have no measured disk target, so they stay hidden from the
-scan and picker.
+merged. The same check decides which local branches go: once a branch's patch is
+in the default branch, it is offered whether it was pushed, its remote side was
+deleted, or it never had one. Branches weigh 0 B, so they appear in the scan
+without adding to the reclaimable total.
 
 ## Flags
 
